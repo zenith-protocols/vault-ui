@@ -1,105 +1,178 @@
+// src/app/page.tsx
 'use client';
 
-import Image from "next/image";
+import { useState, useEffect } from 'react';
+import { Header } from '@/components/header';
+import { VaultDashboard } from '@/components/vault-dashboard';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useWalletStore } from '@/stores/wallet-store';
+import { loadVaultData, type VaultData } from '@/lib/vault';
+import { Search, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { toast } from 'sonner';
 
-export default function Home() {
+export default function VaultApp() {
+  const walletAddress = useWalletStore(state => state.walletAddress);
+  const network = useWalletStore(state => state.network);
+
+  const [vaultAddress, setVaultAddress] = useState('');
+  const [vaultData, setVaultData] = useState<VaultData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load vault data
+  const loadVault = async (address?: string) => {
+    const addressToLoad = address || vaultAddress;
+    if (!addressToLoad) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const data = await loadVaultData(
+        network,
+        addressToLoad,
+        walletAddress || undefined
+      );
+
+      if (data) {
+        setVaultData(data);
+        toast.success('Vault loaded successfully');
+      } else {
+        setError('Failed to load vault. Please check the address.');
+        setVaultData(null);
+      }
+    } catch (err) {
+      console.error('Error loading vault:', err);
+      setError('Invalid vault address or network error');
+      setVaultData(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Refresh data (called after transactions)
+  const refreshData = () => {
+    if (vaultData && vaultAddress) {
+      loadVault(vaultAddress);
+    }
+  };
+
+  // Reload when wallet changes
+  useEffect(() => {
+    if (vaultData && vaultAddress) {
+      loadVault(vaultAddress);
+    }
+  }, [walletAddress]);
+
+  // Optional: Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!vaultData || !vaultAddress) return;
+
+    const interval = setInterval(() => {
+      loadVault(vaultAddress);
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [vaultData, vaultAddress]);
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="min-h-screen bg-background">
+      <Header />
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+      <main className="container mx-auto px-4 py-8">
+        {!vaultData ? (
+          // Vault selection screen
+          <div className="mx-auto max-w-2xl space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Load Vault</CardTitle>
+                <CardDescription>
+                  Enter a vault contract address to view and interact with it
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+                    value={vaultAddress}
+                    onChange={(e) => setVaultAddress(e.target.value)}
+                    className="font-mono text-sm"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !loading) {
+                        loadVault();
+                      }
+                    }}
+                    disabled={loading}
+                  />
+                  <Button
+                    onClick={() => loadVault()}
+                    disabled={loading || !vaultAddress}
+                    className="shrink-0"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Search className="mr-2 h-4 w-4" />
+                        Load
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Optional: Recent vaults or quick actions could go here */}
+          </div>
+        ) : (
+          // Vault dashboard
+          <>
+            {/* Vault header with refresh button */}
+            <div className="mb-6 flex items-center justify-between">
+              <h1 className="text-3xl font-bold">Vault Dashboard</h1>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={refreshData}
+                  disabled={loading}
+                >
+                  <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setVaultData(null);
+                    setVaultAddress('');
+                    setError(null);
+                  }}
+                >
+                  Change Vault
+                </Button>
+              </div>
+            </div>
+
+            <VaultDashboard
+              vaultAddress={vaultAddress}
+              vaultData={vaultData}
+              onTransactionComplete={refreshData}
+              isLoading={loading}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
+          </>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
