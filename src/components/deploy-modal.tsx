@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     Dialog,
     DialogContent,
@@ -30,10 +30,8 @@ interface DeployModalProps {
 const SCALAR_7 = 10_000_000;
 
 export function DeployModal({ open, onOpenChange }: DeployModalProps) {
-    const walletAddress = useWalletStore(state => state.walletAddress);
-    const network = useWalletStore(state => state.network);
-    const submitTransaction = useWalletStore(state => state.submitTransaction);
-    const connected = useWalletStore(state => state.connected);
+    // Change: Now we get the whole context object directly
+    const { walletAddress, network, submitTransaction, connected } = useWalletStore();
 
     // Form state
     const [tokenAddress, setTokenAddress] = useState('');
@@ -47,21 +45,139 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
     const [deployedContractId, setDeployedContractId] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
-    const isTestnet = network.passphrase.includes('Test');
-    const wasmHashes = isTestnet ? WASM_HASHES.testnet : WASM_HASHES.mainnet;
+    // WASM hashes state
+    const [vaultWasmHash, setVaultWasmHash] = useState('');
+    const [tokenWasmHash, setTokenWasmHash] = useState('');
 
-    // Add or remove strategy inputs
-    const addStrategy = () => setStrategies([...strategies, '']);
-    const removeStrategy = (index: number) => {
+    const isTestnet = network.passphrase.includes('Test');
+    const defaultWasmHashes = isTestnet ? WASM_HASHES.testnet : WASM_HASHES.mainnet;
+
+    // Initialize WASM hashes with defaults
+    useEffect(() => {
+        if (!vaultWasmHash && defaultWasmHashes?.vault) {
+            setVaultWasmHash(defaultWasmHashes.vault);
+        }
+        if (!tokenWasmHash && defaultWasmHashes?.token) {
+            setTokenWasmHash(defaultWasmHashes.token);
+        }
+    }, [defaultWasmHashes, vaultWasmHash, tokenWasmHash]);
+
+    const handleAddStrategy = () => {
+        setStrategies([...strategies, '']);
+    };
+
+    const handleRemoveStrategy = (index: number) => {
         setStrategies(strategies.filter((_, i) => i !== index));
     };
-    const updateStrategy = (index: number, value: string) => {
+
+    const handleStrategyChange = (index: number, value: string) => {
         const newStrategies = [...strategies];
         newStrategies[index] = value;
         setStrategies(newStrategies);
     };
 
-    // Reset form
+    const handleCopyContractId = () => {
+        if (deployedContractId) {
+            navigator.clipboard.writeText(deployedContractId);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+            toast.success('Contract ID copied!');
+        }
+    };
+
+    const validateForm = () => {
+        if (!tokenAddress || !StrKey.isValidContract(tokenAddress)) {
+            toast.error('Invalid token contract address');
+            return false;
+        }
+
+        if (!name || name.length > 32) {
+            toast.error('Name must be 1-32 characters');
+            return false;
+        }
+
+        if (!symbol || symbol.length > 12) {
+            toast.error('Symbol must be 1-12 characters');
+            return false;
+        }
+
+        const validStrategies = strategies.filter(s => s && StrKey.isValidContract(s));
+        if (validStrategies.length === 0) {
+            toast.error('At least one valid strategy address is required');
+            return false;
+        }
+
+        // Validate WASM hashes
+        if (!vaultWasmHash || vaultWasmHash.length !== 64) {
+            toast.error('Invalid vault WASM hash (must be 64 characters)');
+            return false;
+        }
+
+        if (!tokenWasmHash || tokenWasmHash.length !== 64) {
+            toast.error('Invalid token WASM hash (must be 64 characters)');
+            return false;
+        }
+
+        return true;
+    };
+
+    const handleDeploy = async () => {
+        if (!connected || !walletAddress) {
+            toast.error('Please connect your wallet first');
+            return;
+        }
+
+        if (!validateForm()) return;
+
+        setDeploying(true);
+        try {
+            // Generate salt for deployment
+            const salt = generateSalt();
+
+            // Calculate contract ID
+            const contractId = await generateContractId(
+                walletAddress,
+                salt,
+                vaultWasmHash
+            );
+
+            // Filter valid strategies
+            const validStrategies = strategies.filter(s => s && StrKey.isValidContract(s));
+
+            // Create deploy operation with correct parameters
+            const deployOp = VaultContract.deploy(
+                walletAddress,  // deployer
+                vaultWasmHash,  // use custom or default wasmHash
+                {
+                    token: tokenAddress,
+                    token_wasm_hash: tokenWasmHash,  // use custom or default token hash
+                    name,
+                    symbol,
+                    strategies: validStrategies,
+                    lock_time: BigInt(redemptionDelay),  // Convert to BigInt
+                    penalty_rate: BigInt(Math.floor(parseFloat(maxPenaltyRate) / 100 * SCALAR_7)),  // Convert to BigInt
+                    min_liquidity_rate: BigInt(Math.floor(parseFloat(minLiquidityRate) / 100 * SCALAR_7)),  // Convert to BigInt
+                },
+                salt
+            );
+
+            // Submit transaction
+            const result = await submitTransaction(deployOp);
+
+            if (result.success) {
+                setDeployedContractId(contractId);
+                toast.success('Vault deployed successfully!');
+            } else {
+                toast.error(result.error || 'Failed to deploy vault');
+            }
+        } catch (error) {
+            console.error('Deploy error:', error);
+            toast.error('Failed to deploy vault');
+        } finally {
+            setDeploying(false);
+        }
+    };
+
     const resetForm = () => {
         setTokenAddress('');
         setName('');
@@ -72,173 +188,18 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
         setMaxPenaltyRate('10');
         setDeployedContractId(null);
         setCopied(false);
+        // Keep WASM hashes as they are likely to be reused
     };
 
-    // Copy contract ID to clipboard
-    const copyContractId = () => {
-        if (deployedContractId) {
-            navigator.clipboard.writeText(deployedContractId);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-            toast.success('Contract ID copied to clipboard');
+    const handleClose = () => {
+        if (!deploying) {
+            resetForm();
+            onOpenChange(false);
         }
     };
 
-    // Create deploy transaction
-    const createDeployTransaction = () => {
-        if (!walletAddress) throw new Error('Wallet not connected');
-
-        // Convert percentage rates to SCALAR_7 format
-        const minLiquidityRateScaled = BigInt(Math.floor(parseFloat(minLiquidityRate) * SCALAR_7 / 100));
-        const maxPenaltyRateScaled = BigInt(Math.floor(parseFloat(maxPenaltyRate) * SCALAR_7 / 100));
-        const lockTime = BigInt(redemptionDelay);
-
-        // Filter out empty strategies and validate addresses
-        const validStrategies = strategies
-            .filter(s => s.trim() !== '')
-            .map(s => {
-                if (!StrKey.isValidContract(s)) {
-                    throw new Error(`Invalid strategy address: ${s}`);
-                }
-                return s;
-            });
-
-        // Validate token address
-        if (!StrKey.isValidContract(tokenAddress)) {
-            throw new Error('Invalid token address');
-        }
-
-        // Generate salt for deterministic contract ID
-        const salt = generateSalt();
-        const contractId = generateContractId(walletAddress, salt, network.passphrase);
-
-        // Use VaultContract.deploy from the SDK
-        const operationXdr = VaultContract.deploy(
-            walletAddress,
-            wasmHashes.vault,
-            {
-                token: tokenAddress,
-                token_wasm_hash: wasmHashes.token,
-                name: name,
-                symbol: symbol,
-                strategies: validStrategies,
-                lock_time: lockTime,
-                penalty_rate: maxPenaltyRateScaled,
-                min_liquidity_rate: minLiquidityRateScaled
-            },
-            salt
-        );
-
-        return { operationXdr, contractId };
-    };
-
-    // Handle deployment
-    const handleDeploy = async () => {
-        if (!connected || !walletAddress) {
-            toast.error('Please connect your wallet');
-            return;
-        }
-
-        setDeploying(true);
-        setDeployedContractId(null);
-
-        try {
-            // Create the deployment transaction
-            const { operationXdr, contractId } = createDeployTransaction();
-
-            // Show predicted contract ID
-            toast.info(`Predicted contract ID: ${contractId.slice(0, 10)}...`);
-
-            // Submit via wallet
-            const result = await submitTransaction(operationXdr);
-
-            if (result.success) {
-                // Use the pre-generated contract ID
-                setDeployedContractId(contractId);
-                toast.success('Vault deployed successfully!');
-
-                // Don't close modal immediately so user can copy the contract ID
-            } else {
-                toast.error(result.error || 'Failed to deploy vault');
-            }
-        } catch (error) {
-            console.error('Deployment error:', error);
-            toast.error(error instanceof Error ? error.message : 'Failed to create deployment transaction');
-        } finally {
-            setDeploying(false);
-        }
-    };
-
-    const isFormValid = tokenAddress && name && symbol && strategies.some(s => s.trim() !== '');
-
-    // If contract is deployed, show success screen
-    if (deployedContractId) {
-        return (
-            <Dialog open={open} onOpenChange={onOpenChange}>
-                <DialogContent className="max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle>
-                            <CheckCircle className="inline-block mr-2 h-6 w-6 text-green-600" />
-                            Vault Deployed Successfully
-                        </DialogTitle>
-                        <DialogDescription>
-                            Your vault has been deployed to the Stellar network
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="space-y-4 py-4">
-                        <div className="rounded-lg border p-4">
-                            <Label className="text-sm text-muted-foreground">Contract Address</Label>
-                            <div className="flex items-center gap-2 mt-2">
-                                <code className="flex-1 p-2 bg-muted rounded text-xs break-all">
-                                    {deployedContractId}
-                                </code>
-                                <Button
-                                    size="icon"
-                                    variant="outline"
-                                    onClick={copyContractId}
-                                >
-                                    {copied ? (
-                                        <CheckCircle className="h-4 w-4 text-green-600" />
-                                    ) : (
-                                        <Copy className="h-4 w-4" />
-                                    )}
-                                </Button>
-                            </div>
-                        </div>
-
-                        <Alert>
-                            <Info className="h-4 w-4" />
-                            <AlertDescription>
-                                Save this contract address! You'll need it to interact with your vault.
-                            </AlertDescription>
-                        </Alert>
-                    </div>
-
-                    <DialogFooter>
-                        <Button
-                            variant="outline"
-                            onClick={resetForm}
-                        >
-                            Deploy Another
-                        </Button>
-                        <Button
-                            onClick={() => {
-                                resetForm();
-                                onOpenChange(false);
-                            }}
-                        >
-                            Done
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        );
-    }
-
-    // Normal deployment form
     return (
-        <Dialog open={open} onOpenChange={onOpenChange}>
+        <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle>Deploy New Vault</DialogTitle>
@@ -247,170 +208,252 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-6 py-4">
-                    {/* Token Configuration */}
+                {deployedContractId ? (
                     <div className="space-y-4">
-                        <h3 className="text-sm font-medium">Token Configuration</h3>
+                        <Alert>
+                            <CheckCircle className="h-4 w-4" />
+                            <AlertDescription>
+                                Vault deployed successfully!
+                            </AlertDescription>
+                        </Alert>
+
                         <div className="space-y-2">
-                            <Label htmlFor="token">Token Address</Label>
-                            <Input
-                                id="token"
-                                placeholder="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
-                                value={tokenAddress}
-                                onChange={(e) => setTokenAddress(e.target.value)}
-                                className="font-mono text-sm"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                The underlying token that will be deposited into the vault
-                            </p>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="name">Share Token Name</Label>
+                            <Label>Contract ID</Label>
+                            <div className="flex gap-2">
                                 <Input
-                                    id="name"
-                                    placeholder="Vault USDC"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
+                                    value={deployedContractId}
+                                    readOnly
+                                    className="font-mono text-sm"
                                 />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="symbol">Share Token Symbol</Label>
-                                <Input
-                                    id="symbol"
-                                    placeholder="vUSDC"
-                                    value={symbol}
-                                    onChange={(e) => setSymbol(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <Separator />
-
-                    {/* Strategies */}
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-medium">Authorized Strategies</h3>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={addStrategy}
-                            >
-                                <Plus className="mr-2 h-4 w-4" />
-                                Add Strategy
-                            </Button>
-                        </div>
-                        <div className="space-y-2">
-                            {strategies.map((strategy, index) => (
-                                <div key={index} className="flex items-center gap-2">
-                                    <Input
-                                        placeholder="Strategy contract address"
-                                        value={strategy}
-                                        onChange={(e) => updateStrategy(index, e.target.value)}
-                                        className="font-mono text-sm"
-                                    />
-                                    {strategies.length > 1 && (
-                                        <Button
-                                            type="button"
-                                            variant="ghost"
-                                            size="icon"
-                                            onClick={() => removeStrategy(index)}
-                                        >
-                                            <X className="h-4 w-4" />
-                                        </Button>
+                                <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={handleCopyContractId}
+                                >
+                                    {copied ? (
+                                        <CheckCircle className="h-4 w-4" />
+                                    ) : (
+                                        <Copy className="h-4 w-4" />
                                     )}
+                                </Button>
+                            </div>
+                        </div>
+
+                        <DialogFooter>
+                            <Button onClick={handleClose}>Close</Button>
+                        </DialogFooter>
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        {/* WASM Hashes */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium">Contract Configuration</h3>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="vaultWasm">Vault WASM Hash</Label>
+                                <Input
+                                    id="vaultWasm"
+                                    placeholder="Vault contract WASM hash"
+                                    value={vaultWasmHash}
+                                    onChange={(e) => setVaultWasmHash(e.target.value)}
+                                    disabled={deploying}
+                                    className="font-mono text-xs"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="tokenWasm">Token WASM Hash (for share token)</Label>
+                                <Input
+                                    id="tokenWasm"
+                                    placeholder="Token contract WASM hash"
+                                    value={tokenWasmHash}
+                                    onChange={(e) => setTokenWasmHash(e.target.value)}
+                                    disabled={deploying}
+                                    className="font-mono text-xs"
+                                />
+                            </div>
+                        </div>
+
+                        <Separator />
+
+                        {/* Basic Configuration */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium">Basic Configuration</h3>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="token">Underlying Token Address</Label>
+                                <Input
+                                    id="token"
+                                    placeholder="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+                                    value={tokenAddress}
+                                    onChange={(e) => setTokenAddress(e.target.value)}
+                                    disabled={deploying}
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Vault Name</Label>
+                                    <Input
+                                        id="name"
+                                        placeholder="My Vault"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        disabled={deploying}
+                                        maxLength={32}
+                                    />
                                 </div>
-                            ))}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            Only these contracts can borrow from the vault
-                        </p>
-                    </div>
 
-                    <Separator />
-
-                    {/* Vault Parameters */}
-                    <div className="space-y-4">
-                        <h3 className="text-sm font-medium">Vault Parameters</h3>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="liquidity">Minimum Liquidity Rate (%)</Label>
-                                <Input
-                                    id="liquidity"
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    value={minLiquidityRate}
-                                    onChange={(e) => setMinLiquidityRate(e.target.value)}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    Minimum % of tokens that must remain in vault
-                                </p>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="penalty">Max Penalty Rate (%)</Label>
-                                <Input
-                                    id="penalty"
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    value={maxPenaltyRate}
-                                    onChange={(e) => setMaxPenaltyRate(e.target.value)}
-                                />
-                                <p className="text-xs text-muted-foreground">
-                                    Maximum penalty for early withdrawals
-                                </p>
+                                <div className="space-y-2">
+                                    <Label htmlFor="symbol">Vault Symbol</Label>
+                                    <Input
+                                        id="symbol"
+                                        placeholder="MVLT"
+                                        value={symbol}
+                                        onChange={(e) => setSymbol(e.target.value)}
+                                        disabled={deploying}
+                                        maxLength={12}
+                                    />
+                                </div>
                             </div>
                         </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="delay">Redemption Delay (seconds)</Label>
-                            <Input
-                                id="delay"
-                                type="number"
-                                min="0"
-                                value={redemptionDelay}
-                                onChange={(e) => setRedemptionDelay(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                Time users must wait before completing withdrawals (default: 86400 = 24 hours)
-                            </p>
+
+                        <Separator />
+
+                        {/* Strategies */}
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-medium">Strategies</h3>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={handleAddStrategy}
+                                    disabled={deploying}
+                                >
+                                    <Plus className="h-4 w-4 mr-1" />
+                                    Add Strategy
+                                </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                                {strategies.map((strategy, index) => (
+                                    <div key={index} className="flex gap-2">
+                                        <Input
+                                            placeholder="Strategy contract address"
+                                            value={strategy}
+                                            onChange={(e) => handleStrategyChange(index, e.target.value)}
+                                            disabled={deploying}
+                                        />
+                                        {strategies.length > 1 && (
+                                            <Button
+                                                size="icon"
+                                                variant="outline"
+                                                onClick={() => handleRemoveStrategy(index)}
+                                                disabled={deploying}
+                                            >
+                                                <X className="h-4 w-4" />
+                                            </Button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+
+                            <Alert>
+                                <Info className="h-4 w-4" />
+                                <AlertDescription>
+                                    Add at least one strategy contract that will manage vault funds
+                                </AlertDescription>
+                            </Alert>
                         </div>
-                    </div>
 
-                    {/* Warning */}
-                    <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                            Deployment will create a new vault contract. Make sure all parameters are correct as they cannot be changed after deployment.
-                        </AlertDescription>
-                    </Alert>
-                </div>
+                        <Separator />
 
-                <DialogFooter>
-                    <Button
-                        variant="outline"
-                        onClick={() => onOpenChange(false)}
-                        disabled={deploying}
-                    >
-                        Cancel
-                    </Button>
-                    <Button
-                        onClick={handleDeploy}
-                        disabled={!isFormValid || deploying || !connected}
-                    >
-                        {deploying ? (
-                            <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Deploying...
-                            </>
-                        ) : (
-                            'Deploy Vault'
+                        {/* Risk Parameters */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium">Risk Parameters</h3>
+
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="minLiquidity">
+                                        Min Liquidity Rate (%)
+                                    </Label>
+                                    <Input
+                                        id="minLiquidity"
+                                        type="number"
+                                        value={minLiquidityRate}
+                                        onChange={(e) => setMinLiquidityRate(e.target.value)}
+                                        disabled={deploying}
+                                        min="0"
+                                        max="100"
+                                        step="0.1"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="redemptionDelay">
+                                        Redemption Delay (seconds)
+                                    </Label>
+                                    <Input
+                                        id="redemptionDelay"
+                                        type="number"
+                                        value={redemptionDelay}
+                                        onChange={(e) => setRedemptionDelay(e.target.value)}
+                                        disabled={deploying}
+                                        min="0"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="maxPenalty">
+                                        Max Penalty Rate (%)
+                                    </Label>
+                                    <Input
+                                        id="maxPenalty"
+                                        type="number"
+                                        value={maxPenaltyRate}
+                                        onChange={(e) => setMaxPenaltyRate(e.target.value)}
+                                        disabled={deploying}
+                                        min="0"
+                                        max="100"
+                                        step="0.1"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {!connected && (
+                            <Alert variant="destructive">
+                                <AlertCircle className="h-4 w-4" />
+                                <AlertDescription>
+                                    Please connect your wallet to deploy a vault
+                                </AlertDescription>
+                            </Alert>
                         )}
-                    </Button>
-                </DialogFooter>
+
+                        <DialogFooter>
+                            <Button
+                                variant="outline"
+                                onClick={handleClose}
+                                disabled={deploying}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleDeploy}
+                                disabled={deploying || !connected}
+                            >
+                                {deploying ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Deploying...
+                                    </>
+                                ) : (
+                                    'Deploy Vault'
+                                )}
+                            </Button>
+                        </DialogFooter>
+                    </div>
+                )}
             </DialogContent>
         </Dialog>
     );

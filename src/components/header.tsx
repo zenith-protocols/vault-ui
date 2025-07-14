@@ -25,19 +25,14 @@ import {
 } from 'lucide-react';
 
 export function Header() {
+    // Change: Now we get the whole context object directly
     const {
         connected,
         walletAddress,
         connect,
         disconnect,
         network
-    } = useWalletStore(state => ({
-        connected: state.connected,
-        walletAddress: state.walletAddress,
-        connect: state.connect,
-        disconnect: state.disconnect,
-        network: state.network
-    }));
+    } = useWalletStore();
 
     const [copied, setCopied] = useState(false);
     const [networkModalOpen, setNetworkModalOpen] = useState(false);
@@ -73,24 +68,12 @@ export function Header() {
                             variant={isTestnet ? "secondary" : "default"}
                             className="font-mono text-xs"
                         >
-                            {isTestnet ? "Testnet" : "Mainnet"}
+                            {isTestnet ? 'TESTNET' : 'MAINNET'}
                         </Badge>
                     </div>
 
-                    {/* Right side - Actions */}
-                    <div className="flex items-center gap-3">
-                        {/* Deploy Button - Always visible */}
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setDeployModalOpen(true)}
-                            className="gap-2"
-                        >
-                            <Plus className="h-4 w-4" />
-                            Deploy Vault
-                        </Button>
-
-                        {/* Wallet Section */}
+                    {/* Right side - Wallet Connection */}
+                    <div className="flex items-center gap-2">
                         {!connected ? (
                             <div className="flex items-center gap-2">
                                 <Button onClick={connect} size="sm">
@@ -126,26 +109,37 @@ export function Header() {
                                         <DropdownMenuSeparator />
                                         <DropdownMenuItem onClick={handleCopyAddress}>
                                             {copied ? (
-                                                <Check className="mr-2 h-4 w-4" />
+                                                <>
+                                                    <Check className="mr-2 h-4 w-4" />
+                                                    Copied!
+                                                </>
                                             ) : (
-                                                <Copy className="mr-2 h-4 w-4" />
+                                                <>
+                                                    <Copy className="mr-2 h-4 w-4" />
+                                                    Copy Address
+                                                </>
                                             )}
-                                            Copy Address
                                         </DropdownMenuItem>
                                         <DropdownMenuItem onClick={() => setNetworkModalOpen(true)}>
                                             <Settings className="mr-2 h-4 w-4" />
                                             Network Settings
                                         </DropdownMenuItem>
                                         <DropdownMenuSeparator />
-                                        <DropdownMenuItem
-                                            onClick={disconnect}
-                                            className="text-destructive focus:text-destructive"
-                                        >
+                                        <DropdownMenuItem onClick={disconnect}>
                                             <LogOut className="mr-2 h-4 w-4" />
                                             Disconnect
                                         </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
+
+                                {/* Deploy Button */}
+                                <Button
+                                    size="sm"
+                                    onClick={() => setDeployModalOpen(true)}
+                                >
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    Deploy Vault
+                                </Button>
                             </div>
                         )}
                     </div>
@@ -153,8 +147,14 @@ export function Header() {
             </header>
 
             {/* Modals */}
-            <NetworkModal open={networkModalOpen} onOpenChange={setNetworkModalOpen} />
-            <DeployModal open={deployModalOpen} onOpenChange={setDeployModalOpen} />
+            <NetworkModal
+                open={networkModalOpen}
+                onOpenChange={setNetworkModalOpen}
+            />
+            <DeployModal
+                open={deployModalOpen}
+                onOpenChange={setDeployModalOpen}
+            />
         </>
     );
 }

@@ -1,4 +1,3 @@
-// src/components/vault/vault-redeem.tsx
 'use client';
 
 import { useState, useMemo } from 'react';

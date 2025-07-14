@@ -1,4 +1,3 @@
-// src/components/vault/vault-actions.tsx
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
@@ -29,10 +28,8 @@ interface VaultActionsProps {
 }
 
 export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }: VaultActionsProps) {
-    const walletAddress = useWalletStore(state => state.walletAddress);
-    const network = useWalletStore(state => state.network);
-    const submitTransaction = useWalletStore(state => state.submitTransaction);
-    const simulateTransaction = useWalletStore(state => state.simulateTransaction);
+    // Change: Direct access to context values
+    const { walletAddress, network, submitTransaction, simulateTransaction } = useWalletStore();
     const queryClient = useQueryClient();
 
     // State
@@ -69,32 +66,9 @@ export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }:
     const currentBalance = actionType === 'deposit' ? tokenBalance : sharesBalance;
     const balanceLabel = actionType === 'deposit' ? vaultData?.tokenSymbol : 'shares';
 
-    // Validation
-    const actionError = useMemo(() => {
-        if (!walletAddress) return 'Connect wallet to continue';
-        if (!amount) return null;
-
-        const inputAmount = parseFloat(amount);
-        if (isNaN(inputAmount) || inputAmount <= 0) return 'Enter a valid amount';
-
-        if (currentBalance && inputAmount > parseFloat(currentBalance)) {
-            return `Insufficient ${balanceLabel}`;
-        }
-
-        if (actionType === 'deposit' && inputAmount < 1) return 'Minimum deposit is 1 token';
-        if (actionType === 'withdraw' && inputAmount < 0.01) return 'Minimum withdrawal is 0.01 shares';
-
-        // Check if user already has pending redemption
-        if (actionType === 'withdraw' && vaultData?.userRedemption) {
-            return 'You already have a pending redemption';
-        }
-
-        return null;
-    }, [walletAddress, amount, currentBalance, actionType, vaultData, balanceLabel]);
-
-    // Simulate transaction
+    // Simulate transaction when amount changes
     useEffect(() => {
-        if (!walletAddress || !amount || actionError) {
+        if (!amount || !walletAddress) {
             setSimulationResult(null);
             return;
         }
@@ -102,68 +76,97 @@ export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }:
         const simulate = async () => {
             setIsSimulating(true);
             try {
+                const vault = new VaultContract(vaultAddress);
                 const inputAmount = parseFloat(amount);
-                const vaultContract = new VaultContract(vaultAddress);
-                const amountInStroops = BigInt(Math.floor(inputAmount * 1e7));
 
-                let tx;
-                if (actionType === 'deposit') {
-                    tx = vaultContract.deposit(amountInStroops, walletAddress, walletAddress);
-                } else {
-                    tx = vaultContract.requestRedeem(amountInStroops, walletAddress);
+                if (isNaN(inputAmount) || inputAmount <= 0) {
+                    setSimulationResult(null);
+                    return;
                 }
 
-                const result = await simulateTransaction(tx);
+                // Convert to smallest units
+                const scaledAmount = Math.floor(inputAmount * (10 ** vaultData.tokenDecimals));
+
+                const operation = actionType === 'deposit'
+                    ? vault.deposit({
+                        amount: scaledAmount,
+                        from: walletAddress,
+                        receiver: walletAddress
+                    })
+                    : vault.requestRedeem({
+                        shares: scaledAmount,
+                        owner: walletAddress
+                    });
+
+                const result = await simulateTransaction(operation);
                 setSimulationResult(result);
             } catch (error) {
-                console.error('Simulation failed:', error);
+                console.error('Simulation error:', error);
                 setSimulationResult({ success: false, error: 'Simulation failed' });
             } finally {
                 setIsSimulating(false);
             }
         };
 
-        // Debounce simulation
         const timer = setTimeout(simulate, 500);
         return () => clearTimeout(timer);
-    }, [walletAddress, amount, actionType, actionError, network, vaultAddress]);
+    }, [amount, actionType, walletAddress, vaultAddress, vaultData, simulateTransaction]);
 
-    // Handle submit
-    const handleSubmit = async () => {
-        if (!walletAddress || !amount || actionError || !simulationResult?.success) return;
+    const handleAction = async () => {
+        if (!walletAddress) {
+            toast.error('Please connect your wallet');
+            return;
+        }
+
+        if (!amount || parseFloat(amount) <= 0) {
+            toast.error('Please enter a valid amount');
+            return;
+        }
 
         setIsProcessing(true);
         try {
+            const vault = new VaultContract(vaultAddress);
             const inputAmount = parseFloat(amount);
-            const vaultContract = new VaultContract(vaultAddress);
-            const amountInStroops = BigInt(Math.floor(inputAmount * 1e7));
+            const scaledAmount = Math.floor(inputAmount * (10 ** vaultData.tokenDecimals));
 
-            let tx;
-            if (actionType === 'deposit') {
-                tx = vaultContract.deposit(amountInStroops, walletAddress, walletAddress);
-            } else {
-                tx = vaultContract.requestRedeem(amountInStroops, walletAddress);
-            }
+            const operation = actionType === 'deposit'
+                ? vault.deposit({
+                    amount: scaledAmount,
+                    from: walletAddress,
+                    receiver: walletAddress
+                })
+                : vault.requestRedeem({
+                    shares: scaledAmount,
+                    owner: walletAddress
+                });
 
-            const result = await submitTransaction(tx);
+            const result = await submitTransaction(operation);
 
             if (result.success) {
-                toast.success(
-                    actionType === 'deposit'
-                        ? 'Deposit successful!'
-                        : 'Withdrawal request submitted!'
-                );
+                toast.success(`${actionType === 'deposit' ? 'Deposit' : 'Withdrawal request'} successful!`);
                 setAmount('');
-                queryClient.invalidateQueries();
-                onTransactionComplete?.();
+
+                // Refresh data
+                if (onTransactionComplete) {
+                    onTransactionComplete();
+                }
+
+                // Invalidate queries
+                queryClient.invalidateQueries({ queryKey: ['vault', vaultAddress] });
             } else {
                 toast.error(result.error || `${actionType} failed`);
             }
         } catch (error) {
-            console.error(`${actionType} failed:`, error);
-            toast.error(`Failed to ${actionType}`);
+            console.error('Transaction error:', error);
+            toast.error('Transaction failed');
         } finally {
             setIsProcessing(false);
+        }
+    };
+
+    const setMaxAmount = () => {
+        if (currentBalance) {
+            setAmount(currentBalance);
         }
     };
 
@@ -172,37 +175,36 @@ export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }:
             <CardHeader>
                 <CardTitle>Vault Actions</CardTitle>
                 <CardDescription>
-                    Deposit tokens to earn yield or withdraw your shares
+                    Deposit tokens or withdraw shares
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {/* Action type toggle */}
+                {/* Action Type Toggle */}
                 <ToggleGroup
                     type="single"
                     value={actionType}
                     onValueChange={(value) => value && setActionType(value as ActionType)}
-                    className="w-full"
+                    className="grid grid-cols-2"
                 >
-                    <ToggleGroupItem value="deposit" className="flex-1">
+                    <ToggleGroupItem value="deposit" aria-label="Deposit">
                         <ArrowDownToLine className="mr-2 h-4 w-4" />
                         Deposit
                     </ToggleGroupItem>
-                    <ToggleGroupItem
-                        value="withdraw"
-                        className="flex-1"
-                        disabled={!!vaultData?.userRedemption}
-                    >
+                    <ToggleGroupItem value="withdraw" aria-label="Withdraw">
                         <ArrowUpFromLine className="mr-2 h-4 w-4" />
                         Withdraw
                     </ToggleGroupItem>
                 </ToggleGroup>
 
-                {/* Amount input */}
+                {/* Amount Input */}
                 <div className="space-y-2">
-                    <Label htmlFor="amount">
-                        {actionType === 'deposit' ? 'Deposit Amount' : 'Withdraw Shares'}
-                    </Label>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center justify-between">
+                        <Label htmlFor="amount">Amount</Label>
+                        <span className="text-sm text-muted-foreground">
+                            Balance: {currentBalance || '0'} {balanceLabel}
+                        </span>
+                    </div>
+                    <div className="flex gap-2">
                         <Input
                             id="amount"
                             type="number"
@@ -214,86 +216,65 @@ export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }:
                         <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => setAmount(currentBalance || '0')}
-                            disabled={!walletAddress || !currentBalance}
+                            onClick={setMaxAmount}
+                            disabled={!currentBalance || isProcessing}
                         >
                             MAX
                         </Button>
                     </div>
-                    {currentBalance && (
-                        <p className="text-sm text-muted-foreground">
-                            Balance: {currentBalance} {balanceLabel}
-                        </p>
-                    )}
                 </div>
 
-                {/* Estimated output */}
-                {amount && parseFloat(amount) > 0 && (
+                {/* Estimated Output */}
+                {amount && estimatedOutput.value !== '0' && (
                     <Alert>
                         <Info className="h-4 w-4" />
                         <AlertDescription>
-                            You will receive approximately <strong>{estimatedOutput.value}</strong> {estimatedOutput.label}
+                            You will receive approximately {estimatedOutput.value} {estimatedOutput.label}
                         </AlertDescription>
                     </Alert>
                 )}
 
-                {/* Vault info for withdrawals */}
-                {actionType === 'withdraw' && vaultData && !vaultData.userRedemption && (
-                    <Alert>
-                        <Info className="h-4 w-4" />
-                        <AlertDescription>
-                            Withdrawals have a {vaultData.redemptionDelay / 60} minute lock period.
-                            Early withdrawal incurs up to {(vaultData.maxPenaltyRate * 100).toFixed(1)}% penalty.
-                        </AlertDescription>
-                    </Alert>
-                )}
-
-                {/* Error messages */}
-                {actionError && (
+                {/* Simulation Result */}
+                {simulationResult && !simulationResult.success && (
                     <Alert variant="destructive">
                         <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>{actionError}</AlertDescription>
-                    </Alert>
-                )}
-
-                {/* Simulation result */}
-                {simulationResult && !actionError && (
-                    <Alert variant={simulationResult.success ? 'default' : 'destructive'}>
-                        <Info className="h-4 w-4" />
                         <AlertDescription>
-                            {simulationResult.success
-                                ? `Estimated fee: ${simulationResult.fee || '0.1'} XLM`
-                                : simulationResult.error}
+                            {simulationResult.error || 'Transaction simulation failed'}
                         </AlertDescription>
                     </Alert>
                 )}
 
-                {/* Submit button */}
+                {/* Action Button */}
                 <Button
-                    onClick={handleSubmit}
-                    disabled={
-                        !walletAddress ||
-                        !!actionError ||
-                        isProcessing ||
-                        isSimulating ||
-                        !simulationResult?.success
-                    }
                     className="w-full"
-                    size="lg"
+                    onClick={handleAction}
+                    disabled={isProcessing || isSimulating || !amount || parseFloat(amount) <= 0}
                 >
                     {isProcessing ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : actionType === 'deposit' ? (
-                        <ArrowDownToLine className="mr-2 h-4 w-4" />
+                        <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Processing...
+                        </>
                     ) : (
-                        <ArrowUpFromLine className="mr-2 h-4 w-4" />
+                        <>
+                            {actionType === 'deposit' ? (
+                                <ArrowDownToLine className="mr-2 h-4 w-4" />
+                            ) : (
+                                <ArrowUpFromLine className="mr-2 h-4 w-4" />
+                            )}
+                            {actionType === 'deposit' ? 'Deposit' : 'Request Withdrawal'}
+                        </>
                     )}
-                    {isProcessing
-                        ? 'Processing...'
-                        : actionType === 'deposit'
-                            ? 'Deposit'
-                            : 'Request Withdrawal'}
                 </Button>
+
+                {actionType === 'withdraw' && (
+                    <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                            Withdrawals require a {vaultData.redemptionDelay / 60} minute waiting period before redemption.
+                        </AlertDescription>
+                    </Alert>
+                )}
             </CardContent>
         </Card>
     );

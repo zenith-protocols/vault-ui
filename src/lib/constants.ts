@@ -1,8 +1,8 @@
 // WASM hashes for deployment
 export const WASM_HASHES = {
     testnet: {
-        vault: 'YOUR_TESTNET_VAULT_WASM_HASH',
-        token: 'YOUR_TESTNET_TOKEN_WASM_HASH',
+        vault: 'b187ad02b18afdabedbacb8b46ad2fb8cf388b4f758a93517fec11ef4d83e23c',
+        token: '53334e8121c2de966aa6e92dc3cc85ddc1aa8a2e8e751ce84841691bc5fcad73',
     },
     mainnet: {
         vault: 'YOUR_MAINNET_VAULT_WASM_HASH',

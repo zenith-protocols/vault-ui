@@ -1,4 +1,3 @@
-// src/components/network-modal.tsx
 'use client';
 
 import {
@@ -35,16 +34,15 @@ const NETWORK_OPTIONS = {
         icon: Globe,
     },
     custom: {
+        config: null,  // Add this to fix the TypeScript error
         displayName: 'Custom Network',
         icon: Server,
     },
 };
 
 export function NetworkModal({ open, onOpenChange }: NetworkModalProps) {
-    const { network, setNetwork } = useWalletStore(state => ({
-        network: state.network,
-        setNetwork: state.setNetwork
-    }));
+    // Change: Direct access to context values
+    const { network, setNetwork } = useWalletStore();
 
     const [selectedNetwork, setSelectedNetwork] = useState<string>('testnet');
     const [customRpc, setCustomRpc] = useState('');
@@ -59,8 +57,8 @@ export function NetworkModal({ open, onOpenChange }: NetworkModalProps) {
             setSelectedNetwork('mainnet');
         } else {
             setSelectedNetwork('custom');
-            setCustomRpc(network.rpc);
-            setCustomHorizon(network.horizon);
+            setCustomRpc(network.rpc || '');
+            setCustomHorizon(network.horizon || '');
             setCustomPassphrase(network.passphrase);
         }
     }, [network]);
@@ -68,87 +66,78 @@ export function NetworkModal({ open, onOpenChange }: NetworkModalProps) {
     const handleSave = () => {
         if (selectedNetwork === 'custom') {
             if (!customRpc || !customHorizon || !customPassphrase) {
-                return;
+                return; // Don't save if custom fields are empty
             }
+
             setNetwork({
-                passphrase: customPassphrase,
                 rpc: customRpc,
                 horizon: customHorizon,
-                explorer: 'https://stellar.expert/explorer/custom',
-                launchtube: '',
-                useLaunchtube: false,
+                passphrase: customPassphrase,
+                explorer: 'https://stellar.expert/explorer/public',
             });
-        } else if (selectedNetwork === 'testnet') {
-            setNetwork(TESTNET);
-        } else if (selectedNetwork === 'mainnet') {
-            setNetwork(MAINNET);
+        } else {
+            setNetwork(NETWORK_OPTIONS[selectedNetwork as 'testnet' | 'mainnet'].config);
         }
+
         onOpenChange(false);
     };
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-md">
+            <DialogContent>
                 <DialogHeader>
                     <DialogTitle>Network Settings</DialogTitle>
                     <DialogDescription>
-                        Select the Stellar network to connect to
+                        Choose which Stellar network to connect to
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-6 py-4">
+                <div className="space-y-4">
                     <RadioGroup value={selectedNetwork} onValueChange={setSelectedNetwork}>
-                        <div className="space-y-3">
-                            {Object.entries(NETWORK_OPTIONS).map(([key, option]) => {
-                                const Icon = option.icon;
-                                return (
-                                    <div key={key} className="flex items-start space-x-3">
-                                        <RadioGroupItem value={key} id={key} className="mt-1" />
-                                        <Label
-                                            htmlFor={key}
-                                            className="flex-1 cursor-pointer space-y-1"
-                                        >
-                                            <div className="flex items-center gap-2 font-medium">
-                                                <Icon className="h-4 w-4" />
-                                                {option.displayName}
-                                            </div>
-                                            {key !== 'custom' && 'config' in option && (
-                                                <div className="text-sm text-muted-foreground">
-                                                    {option.config.rpc}
-                                                </div>
-                                            )}
-                                        </Label>
-                                    </div>
-                                );
-                            })}
-                        </div>
+                        {Object.entries(NETWORK_OPTIONS).map(([key, option]) => {
+                            const Icon = option.icon;
+                            return (
+                                <div key={key} className="flex items-center space-x-2">
+                                    <RadioGroupItem value={key} id={key} />
+                                    <Label
+                                        htmlFor={key}
+                                        className="flex items-center gap-2 cursor-pointer flex-1"
+                                    >
+                                        <Icon className="h-4 w-4" />
+                                        {option.displayName}
+                                    </Label>
+                                </div>
+                            );
+                        })}
                     </RadioGroup>
 
                     {selectedNetwork === 'custom' && (
-                        <div className="space-y-4 rounded-lg border p-4">
+                        <div className="space-y-4 pt-4">
                             <div className="space-y-2">
-                                <Label htmlFor="custom-rpc">Soroban RPC URL</Label>
+                                <Label htmlFor="rpc">RPC URL</Label>
                                 <Input
-                                    id="custom-rpc"
-                                    placeholder="https://soroban-custom.stellar.org"
+                                    id="rpc"
+                                    placeholder="https://soroban-rpc.stellar.org"
                                     value={customRpc}
                                     onChange={(e) => setCustomRpc(e.target.value)}
                                 />
                             </div>
+
                             <div className="space-y-2">
-                                <Label htmlFor="custom-horizon">Horizon URL</Label>
+                                <Label htmlFor="horizon">Horizon URL</Label>
                                 <Input
-                                    id="custom-horizon"
-                                    placeholder="https://horizon-custom.stellar.org"
+                                    id="horizon"
+                                    placeholder="https://horizon.stellar.org"
                                     value={customHorizon}
                                     onChange={(e) => setCustomHorizon(e.target.value)}
                                 />
                             </div>
+
                             <div className="space-y-2">
-                                <Label htmlFor="custom-passphrase">Network Passphrase</Label>
+                                <Label htmlFor="passphrase">Network Passphrase</Label>
                                 <Input
-                                    id="custom-passphrase"
-                                    placeholder="Custom Network ; Month Year"
+                                    id="passphrase"
+                                    placeholder="Public Global Stellar Network ; September 2015"
                                     value={customPassphrase}
                                     onChange={(e) => setCustomPassphrase(e.target.value)}
                                 />
@@ -156,25 +145,21 @@ export function NetworkModal({ open, onOpenChange }: NetworkModalProps) {
                         </div>
                     )}
 
-                    <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                            Changing networks will disconnect your wallet. You'll need to reconnect after switching.
-                        </AlertDescription>
-                    </Alert>
+                    {selectedNetwork === 'mainnet' && (
+                        <Alert>
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>
+                                You are about to switch to Mainnet. Real assets will be used.
+                            </AlertDescription>
+                        </Alert>
+                    )}
                 </div>
 
-                <div className="flex justify-end gap-3">
+                <div className="flex justify-end gap-2 pt-4">
                     <Button variant="outline" onClick={() => onOpenChange(false)}>
                         Cancel
                     </Button>
-                    <Button
-                        onClick={handleSave}
-                        disabled={
-                            selectedNetwork === 'custom' &&
-                            (!customRpc || !customHorizon || !customPassphrase)
-                        }
-                    >
+                    <Button onClick={handleSave}>
                         Save Changes
                     </Button>
                 </div>
