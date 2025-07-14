@@ -1,78 +1,82 @@
+// src/components/vault/vault-state.tsx
 'use client';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { useNetwork } from '@/hooks/use-wallet';
-import { useContracts } from '@/hooks/use-contracts';
-import { useVaultState } from '@/hooks/use-vault';
-import { useVaultStrategies } from '@/hooks/use-vault';
-import { ExternalLink, TrendingUp, Users, DollarSign, Lock, AlertTriangle, Activity } from 'lucide-react';
+import { Progress } from '@/components/ui/progress';
+import {
+    TrendingUp,
+    Wallet,
+    Lock,
+    AlertTriangle,
+    Info,
+    Users,
+    DollarSign,
+    Activity
+} from 'lucide-react';
 
-export function VaultState() {
-    const { network } = useNetwork();
-    const contracts = useContracts();
-    const { data: vaultState } = useVaultState(network, contracts.vault, contracts.token);
-    const { data: strategiesData } = useVaultStrategies(network, contracts.vault);
+interface VaultStateProps {
+    vaultAddress: string;
+    vaultData: any;
+}
 
-    if (!vaultState) {
+export function VaultState({ vaultAddress, vaultData }: VaultStateProps) {
+    if (!vaultData) {
         return (
             <Card>
                 <CardHeader>
-                    <CardTitle>Vault Statistics</CardTitle>
-                    <CardDescription>Loading vault information...</CardDescription>
+                    <CardTitle>Vault Overview</CardTitle>
+                    <CardDescription>Loading vault data...</CardDescription>
                 </CardHeader>
+                <CardContent>
+                    <div className="h-96 flex items-center justify-center text-muted-foreground">
+                        <Info className="h-8 w-8" />
+                    </div>
+                </CardContent>
             </Card>
         );
     }
 
-    // Calculate share price
-    const sharePrice = vaultState.totalShares > 0
-        ? vaultState.balance / vaultState.totalShares
-        : 1;
-
-    // Get explorer URL based on network
-    const explorerUrl = network.passphrase.includes('Test')
-        ? 'https://stellar.expert/explorer/testnet/contract/'
-        : 'https://stellar.expert/explorer/public/contract/';
-
-    // Format address for display
-    const formatAddress = (address: string) => {
-        return `${address.slice(0, 4)}...${address.slice(-4)}`;
-    };
-
-    // Format PnL with color
-    const formatPnL = (pnl: number) => {
-        const isPositive = pnl >= 0;
-        const sign = isPositive ? '+' : '';
-        const color = isPositive ? 'text-green-600' : 'text-red-600';
-        return <span className={color}>{sign}{pnl.toFixed(2)}</span>;
-    };
+    const sharePrice = vaultData.sharePrice || 1;
+    const utilizationRate = vaultData.totalTokens > 0
+        ? ((vaultData.totalTokens - vaultData.availableLiquidity) / vaultData.totalTokens) * 100
+        : 0;
 
     return (
         <Card>
             <CardHeader>
-                <CardTitle>Vault Statistics</CardTitle>
-                <CardDescription>Current vault performance and configuration</CardDescription>
+                <CardTitle>Vault Overview</CardTitle>
+                <CardDescription className="font-mono text-xs">
+                    {vaultAddress.slice(0, 6)}...{vaultAddress.slice(-4)}
+                </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-                {/* Main Statistics */}
-                <div className="grid grid-cols-3 gap-4">
+            <CardContent className="space-y-4">
+                {/* Token Info */}
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">Asset</span>
+                    </div>
+                    <Badge variant="secondary">{vaultData.tokenSymbol}</Badge>
+                </div>
+
+                {/* Key Metrics */}
+                <div className="grid grid-cols-2 gap-4 pt-2">
                     <div className="space-y-1">
                         <p className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Users className="h-3 w-3" />
-                            TVL
+                            <Wallet className="h-3 w-3" />
+                            Total Value Locked
                         </p>
-                        <p className="text-2xl font-bold">{vaultState.balance.toFixed(2)}</p>
-                        <p className="text-xs text-muted-foreground">tokens</p>
+                        <p className="text-2xl font-bold">{vaultData.totalValueLocked}</p>
+                        <p className="text-xs text-muted-foreground">{vaultData.tokenSymbol}</p>
                     </div>
                     <div className="space-y-1">
                         <p className="text-sm text-muted-foreground flex items-center gap-1">
-                            <Activity className="h-3 w-3" />
+                            <Users className="h-3 w-3" />
                             Total Shares
                         </p>
-                        <p className="text-2xl font-bold">{vaultState.totalShares.toFixed(2)}</p>
+                        <p className="text-2xl font-bold">{vaultData.totalShares}</p>
                         <p className="text-xs text-muted-foreground">shares issued</p>
                     </div>
                     <div className="space-y-1">
@@ -81,8 +85,27 @@ export function VaultState() {
                             Share Price
                         </p>
                         <p className="text-2xl font-bold">{sharePrice.toFixed(4)}</p>
-                        <p className="text-xs text-muted-foreground">tokens/share</p>
+                        <p className="text-xs text-muted-foreground">{vaultData.tokenSymbol}/share</p>
                     </div>
+                    <div className="space-y-1">
+                        <p className="text-sm text-muted-foreground flex items-center gap-1">
+                            <Activity className="h-3 w-3" />
+                            Available Liquidity
+                        </p>
+                        <p className="text-2xl font-bold">{vaultData.availableLiquidity}</p>
+                        <p className="text-xs text-muted-foreground">{vaultData.tokenSymbol}</p>
+                    </div>
+                </div>
+
+                <Separator />
+
+                {/* Utilization */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Utilization Rate</span>
+                        <span className="font-medium">{utilizationRate.toFixed(1)}%</span>
+                    </div>
+                    <Progress value={utilizationRate} className="h-2" />
                 </div>
 
                 <Separator />
@@ -97,56 +120,77 @@ export function VaultState() {
                                 Withdrawal Lock Period
                             </span>
                             <Badge variant="secondary">
-                                {vaultState.lockTime / 60} minutes
+                                {vaultData.redemptionDelay / 60} minutes
                             </Badge>
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-muted-foreground flex items-center gap-1">
                                 <AlertTriangle className="h-3 w-3" />
-                                Early Withdrawal Penalty
+                                Max Early Withdrawal Penalty
                             </span>
                             <Badge variant="destructive">
-                                {(vaultState.penaltyRate * 100).toFixed(1)}%
+                                {(vaultData.maxPenaltyRate * 100).toFixed(1)}%
+                            </Badge>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground flex items-center gap-1">
+                                <Activity className="h-3 w-3" />
+                                Min Liquidity Rate
+                            </span>
+                            <Badge variant="outline">
+                                {(vaultData.minLiquidityRate * 100).toFixed(0)}%
                             </Badge>
                         </div>
                     </div>
                 </div>
 
                 {/* Strategies */}
-                {vaultState.strategies.length > 0 && (
+                {vaultData.strategies && vaultData.strategies.length > 0 && (
                     <>
                         <Separator />
                         <div className="space-y-3">
                             <h4 className="text-sm font-medium">Active Strategies</h4>
                             <div className="space-y-2">
-                                {vaultState.strategies.map((strategy, index) => {
-                                    // Get PnL data for this strategy if available
-                                    const strategyPnL = strategiesData?.[strategy] || 0;
-
-                                    return (
-                                        <div key={index} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
-                                            <div className="flex items-center gap-2">
-                                                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                                                <code className="text-sm font-mono">
-                                                    {formatAddress(strategy)}
-                                                </code>
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <div className="text-sm font-medium">
-                                                    P&L: {formatPnL(strategyPnL)}
-                                                </div>
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    className="h-7 px-2"
-                                                    onClick={() => window.open(`${explorerUrl}${strategy}`, '_blank')}
-                                                >
-                                                    <ExternalLink className="h-3.5 w-3.5" />
-                                                </Button>
-                                            </div>
+                                {vaultData.strategies.map((strategy: any, index: number) => (
+                                    <div key={index} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
+                                        <div>
+                                            <p className="text-sm font-mono">
+                                                {strategy.address.slice(0, 8)}...{strategy.address.slice(-4)}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                Borrowed: {strategy.borrowed} {vaultData.tokenSymbol}
+                                            </p>
                                         </div>
-                                    );
-                                })}
+                                        <Badge
+                                            variant={parseFloat(strategy.netImpact) >= 0 ? "default" : "destructive"}
+                                            className="text-xs"
+                                        >
+                                            {parseFloat(strategy.netImpact) >= 0 ? '+' : ''}{strategy.netImpact}%
+                                        </Badge>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                )}
+
+                {/* User Holdings */}
+                {vaultData.userShareBalance && (
+                    <>
+                        <Separator />
+                        <div className="rounded-lg bg-primary/5 p-4 space-y-2">
+                            <h4 className="text-sm font-medium">Your Holdings</h4>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-sm text-muted-foreground">Shares</p>
+                                    <p className="text-lg font-bold">{vaultData.userShareBalance}</p>
+                                </div>
+                                <div>
+                                    <p className="text-sm text-muted-foreground">Value</p>
+                                    <p className="text-lg font-bold">
+                                        {(parseFloat(vaultData.userShareBalance) * sharePrice).toFixed(2)} {vaultData.tokenSymbol}
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </>

@@ -1,7 +1,8 @@
+'use client';
+
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { Header } from "@/components/layout/header";
 import { TransactionOverlay } from "@/components/transaction-overlay";
 
 const geistSans = Geist({
@@ -27,7 +28,6 @@ export default function RootLayout({
       >
         <Providers>
           <div className="relative min-h-screen">
-            <Header />
             <main className="container mx-auto px-4 py-8">
               {children}
             </main>

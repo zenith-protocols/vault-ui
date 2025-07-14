@@ -1,3 +1,4 @@
+// src/components/vault/vault-actions.tsx
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
@@ -7,12 +8,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { useWallet, useTransaction, useNetwork } from '@/hooks/use-wallet';
-import { useVaultState, useVaultWithdrawal } from '@/hooks/use-vault';
-import { useTokenBalance } from '@/hooks/use-token';
+import { useWalletStore } from '@/stores/wallet-store';
 import { useQueryClient } from '@tanstack/react-query';
-import { VaultContract } from '@zenith-protocols/zenex-sdk';
-import { VaultWithdrawal } from './vault-withdrawal';
+import { VaultContract } from '@zenith-protocols/vault-sdk';
+import { toast } from 'sonner';
 import {
     ArrowDownToLine,
     ArrowUpFromLine,
@@ -20,85 +19,59 @@ import {
     Loader2,
     Info
 } from 'lucide-react';
-import { useDebounce } from '@/hooks/use-debounce';
-import type { SimulationResult } from '@/lib/stellar';
 
 type ActionType = 'deposit' | 'withdraw';
 
-export function VaultActions() {
-    const { connected, walletAddress } = useWallet();
-    const { submitTransaction, isTransacting, simulateTransaction } = useTransaction();
-    const { network } = useNetwork();
-    const contracts = useContracts();
+interface VaultActionsProps {
+    vaultAddress: string;
+    vaultData: any;
+    onTransactionComplete?: () => void;
+}
+
+export function VaultActions({ vaultAddress, vaultData, onTransactionComplete }: VaultActionsProps) {
+    const walletAddress = useWalletStore(state => state.walletAddress);
+    const network = useWalletStore(state => state.network);
+    const submitTransaction = useWalletStore(state => state.submitTransaction);
+    const simulateTransaction = useWalletStore(state => state.simulateTransaction);
     const queryClient = useQueryClient();
 
     // State
     const [actionType, setActionType] = useState<ActionType>('deposit');
     const [amount, setAmount] = useState('');
-    const [simulation, setSimulation] = useState<SimulationResult | null>(null);
-    const [simulating, setSimulating] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [isSimulating, setIsSimulating] = useState(false);
+    const [simulationResult, setSimulationResult] = useState<any>(null);
 
-    // Get data
-    const { data: vaultState } = useVaultState(network, contracts.vault, contracts.token);
-    const { data: withdrawal, refetch: refetchWithdrawal } = useVaultWithdrawal(
-        network,
-        contracts.vault,
-        walletAddress || ''
-    );
+    // Get balances
+    const tokenBalance = vaultData?.userTokenBalance;
+    const sharesBalance = vaultData?.userShareBalance;
+    const sharePrice = vaultData?.sharePrice || 1;
 
-    // Get user's token balance
-    const { data: tokenData } = useTokenBalance(
-        network,
-        contracts.token,
-        walletAddress || '',
-        7
-    );
-
-    // Get user's vault shares balance
-    const { data: sharesData } = useTokenBalance(
-        network,
-        vaultState?.shareToken || '',
-        walletAddress || '',
-        7
-    );
-
-    const tokenBalance = tokenData?.balance;
-    const sharesBalance = sharesData?.balance;
-
-    // Calculate share price
-    const sharePrice = useMemo(() => {
-        if (!vaultState) return 1;
-        return vaultState.totalShares > 0
-            ? vaultState.balance / vaultState.totalShares
-            : 1;
-    }, [vaultState]);
-
-    // Calculate estimated output (works even without wallet connected)
+    // Calculate estimated output
     const estimatedOutput = useMemo(() => {
-        if (!amount || !vaultState) return { value: '0', label: '' };
+        if (!amount || !vaultData) return { value: '0', label: '' };
 
         const inputAmount = parseFloat(amount);
         if (isNaN(inputAmount) || inputAmount <= 0) return { value: '0', label: '' };
 
         if (actionType === 'deposit') {
             // Depositing tokens, get shares
-            const shares = sharePrice > 0 ? inputAmount / sharePrice : inputAmount;
+            const shares = inputAmount / sharePrice;
             return { value: shares.toFixed(4), label: 'shares' };
         } else {
-            // Withdrawing shares, get tokens
+            // Withdrawing shares, get tokens  
             const tokens = inputAmount * sharePrice;
-            return { value: tokens.toFixed(2), label: 'tokens' };
+            return { value: tokens.toFixed(2), label: vaultData.tokenSymbol };
         }
-    }, [amount, actionType, sharePrice, vaultState]);
+    }, [amount, actionType, sharePrice, vaultData]);
 
     // Get balance for current action type
     const currentBalance = actionType === 'deposit' ? tokenBalance : sharesBalance;
-    const balanceLabel = actionType === 'deposit' ? 'tokens' : 'shares';
+    const balanceLabel = actionType === 'deposit' ? vaultData?.tokenSymbol : 'shares';
 
     // Validation
     const actionError = useMemo(() => {
-        if (!connected) return `Connect wallet to ${actionType}`;
-        if (withdrawal && actionType === 'withdraw') return 'You already have a pending withdrawal';
+        if (!walletAddress) return 'Connect wallet to continue';
         if (!amount) return null;
 
         const inputAmount = parseFloat(amount);
@@ -111,88 +84,86 @@ export function VaultActions() {
         if (actionType === 'deposit' && inputAmount < 1) return 'Minimum deposit is 1 token';
         if (actionType === 'withdraw' && inputAmount < 0.01) return 'Minimum withdrawal is 0.01 shares';
 
+        // Check if user already has pending redemption
+        if (actionType === 'withdraw' && vaultData?.userRedemption) {
+            return 'You already have a pending redemption';
+        }
+
         return null;
-    }, [connected, amount, currentBalance, actionType, withdrawal, balanceLabel]);
+    }, [walletAddress, amount, currentBalance, actionType, vaultData, balanceLabel]);
 
-    // Debounced amount for simulation
-    const debouncedAmount = useDebounce(amount, 500);
-
-    // Simulate transactions
+    // Simulate transaction
     useEffect(() => {
-        if (!connected || !walletAddress || !debouncedAmount || (actionType === 'withdraw' && withdrawal)) {
-            setSimulation(null);
+        if (!walletAddress || !amount || actionError) {
+            setSimulationResult(null);
             return;
         }
 
         const simulate = async () => {
-            setSimulating(true);
-            setSimulation(null);
-
+            setIsSimulating(true);
             try {
-                const inputAmount = parseFloat(debouncedAmount);
-                if (!isNaN(inputAmount) && inputAmount > 0) {
-                    const vaultContract = new VaultContract(contracts.vault);
-                    const amountInStroops = BigInt(Math.floor(inputAmount * 1e7));
+                const inputAmount = parseFloat(amount);
+                const vaultContract = new VaultContract(vaultAddress);
+                const amountInStroops = BigInt(Math.floor(inputAmount * 1e7));
 
-                    let operationXdr: string;
-                    if (actionType === 'deposit') {
-                        operationXdr = vaultContract.deposit({
-                            receiver: walletAddress,
-                            tokens: amountInStroops
-                        });
-                    } else {
-                        operationXdr = vaultContract.queueWithdraw({
-                            owner: walletAddress,
-                            shares: amountInStroops
-                        });
-                    }
-
-                    const result = await simulateTransaction(operationXdr);
-                    setSimulation(result);
+                let tx;
+                if (actionType === 'deposit') {
+                    tx = vaultContract.deposit(amountInStroops, walletAddress, walletAddress);
+                } else {
+                    tx = vaultContract.requestRedeem(amountInStroops, walletAddress);
                 }
+
+                const result = await simulateTransaction(tx);
+                setSimulationResult(result);
             } catch (error) {
                 console.error('Simulation failed:', error);
+                setSimulationResult({ success: false, error: 'Simulation failed' });
             } finally {
-                setSimulating(false);
+                setIsSimulating(false);
             }
         };
 
-        simulate();
-    }, [debouncedAmount, actionType, connected, walletAddress, withdrawal, contracts.vault, simulateTransaction]);
+        // Debounce simulation
+        const timer = setTimeout(simulate, 500);
+        return () => clearTimeout(timer);
+    }, [walletAddress, amount, actionType, actionError, network, vaultAddress]);
 
     // Handle submit
     const handleSubmit = async () => {
-        if (!walletAddress || !amount) return;
+        if (!walletAddress || !amount || actionError || !simulationResult?.success) return;
 
+        setIsProcessing(true);
         try {
-            const vaultContract = new VaultContract(contracts.vault);
-            const inputAmount = BigInt(Math.floor(parseFloat(amount) * 1e7));
+            const inputAmount = parseFloat(amount);
+            const vaultContract = new VaultContract(vaultAddress);
+            const amountInStroops = BigInt(Math.floor(inputAmount * 1e7));
 
-            let operationXdr: string;
+            let tx;
             if (actionType === 'deposit') {
-                operationXdr = vaultContract.deposit({
-                    receiver: walletAddress,
-                    tokens: inputAmount
-                });
+                tx = vaultContract.deposit(amountInStroops, walletAddress, walletAddress);
             } else {
-                operationXdr = vaultContract.queueWithdraw({
-                    owner: walletAddress,
-                    shares: inputAmount
-                });
+                tx = vaultContract.requestRedeem(amountInStroops, walletAddress);
             }
 
-            const result = await submitTransaction(operationXdr);
+            const result = await submitTransaction(tx);
 
             if (result.success) {
+                toast.success(
+                    actionType === 'deposit'
+                        ? 'Deposit successful!'
+                        : 'Withdrawal request submitted!'
+                );
                 setAmount('');
-                if (actionType === 'withdraw') {
-                    refetchWithdrawal();
-                }
-                queryClient.invalidateQueries({ queryKey: ['vault'] });
-                queryClient.invalidateQueries({ queryKey: ['token-balance'] });
+                queryClient.invalidateQueries();
+                onTransactionComplete?.();
+            } else {
+                toast.error(result.error || `${actionType} failed`);
             }
         } catch (error) {
             console.error(`${actionType} failed:`, error);
+            toast.error(`Failed to ${actionType}`);
+        } finally {
+            setIsProcessing(false);
         }
     };
 
@@ -205,9 +176,6 @@ export function VaultActions() {
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {/* Always show withdrawal status at the top if it exists */}
-
-
                 {/* Action type toggle */}
                 <ToggleGroup
                     type="single"
@@ -219,7 +187,11 @@ export function VaultActions() {
                         <ArrowDownToLine className="mr-2 h-4 w-4" />
                         Deposit
                     </ToggleGroupItem>
-                    <ToggleGroupItem value="withdraw" className="flex-1" disabled={!!withdrawal}>
+                    <ToggleGroupItem
+                        value="withdraw"
+                        className="flex-1"
+                        disabled={!!vaultData?.userRedemption}
+                    >
                         <ArrowUpFromLine className="mr-2 h-4 w-4" />
                         Withdraw
                     </ToggleGroupItem>
@@ -237,13 +209,13 @@ export function VaultActions() {
                             placeholder="0.00"
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
-                            disabled={!connected || (actionType === 'withdraw' && !!withdrawal)}
+                            disabled={isProcessing}
                         />
                         <Button
                             variant="outline"
                             size="sm"
                             onClick={() => setAmount(currentBalance || '0')}
-                            disabled={!connected || !currentBalance || (actionType === 'withdraw' && !!withdrawal)}
+                            disabled={!walletAddress || !currentBalance}
                         >
                             MAX
                         </Button>
@@ -255,7 +227,7 @@ export function VaultActions() {
                     )}
                 </div>
 
-                {/* Always show estimate, even without wallet connected */}
+                {/* Estimated output */}
                 {amount && parseFloat(amount) > 0 && (
                     <Alert>
                         <Info className="h-4 w-4" />
@@ -265,13 +237,13 @@ export function VaultActions() {
                     </Alert>
                 )}
 
-                {/* Show vault info for withdrawals */}
-                {actionType === 'withdraw' && vaultState && !withdrawal && (
+                {/* Vault info for withdrawals */}
+                {actionType === 'withdraw' && vaultData && !vaultData.userRedemption && (
                     <Alert>
                         <Info className="h-4 w-4" />
                         <AlertDescription>
-                            Withdrawals have a {vaultState.lockTime / 60} minute lock period.
-                            Early withdrawal incurs a {(vaultState.penaltyRate * 100).toFixed(1)}% penalty.
+                            Withdrawals have a {vaultData.redemptionDelay / 60} minute lock period.
+                            Early withdrawal incurs up to {(vaultData.maxPenaltyRate * 100).toFixed(1)}% penalty.
                         </AlertDescription>
                     </Alert>
                 )}
@@ -285,13 +257,13 @@ export function VaultActions() {
                 )}
 
                 {/* Simulation result */}
-                {simulation && amount && (
-                    <Alert variant={simulation.success ? 'default' : 'destructive'}>
+                {simulationResult && !actionError && (
+                    <Alert variant={simulationResult.success ? 'default' : 'destructive'}>
                         <Info className="h-4 w-4" />
                         <AlertDescription>
-                            {simulation.success
-                                ? `Estimated fee: 0.1 XLM`
-                                : simulation.error}
+                            {simulationResult.success
+                                ? `Estimated fee: ${simulationResult.fee || '0.1'} XLM`
+                                : simulationResult.error}
                         </AlertDescription>
                     </Alert>
                 )}
@@ -300,38 +272,28 @@ export function VaultActions() {
                 <Button
                     onClick={handleSubmit}
                     disabled={
-                        !connected ||
+                        !walletAddress ||
                         !!actionError ||
-                        isTransacting ||
-                        simulating ||
-                        !simulation?.success ||
-                        (actionType === 'withdraw' && !!withdrawal)
+                        isProcessing ||
+                        isSimulating ||
+                        !simulationResult?.success
                     }
                     className="w-full"
+                    size="lg"
                 >
-                    {isTransacting ? (
-                        <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            {actionType === 'deposit' ? 'Depositing...' : 'Queuing Withdrawal...'}
-                        </>
-                    ) : simulating ? (
-                        <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Simulating...
-                        </>
+                    {isProcessing ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : actionType === 'deposit' ? (
+                        <ArrowDownToLine className="mr-2 h-4 w-4" />
                     ) : (
-                        <>
-                            {actionType === 'deposit' ? (
-                                <ArrowDownToLine className="mr-2 h-4 w-4" />
-                            ) : (
-                                <ArrowUpFromLine className="mr-2 h-4 w-4" />
-                            )}
-                            {actionType === 'deposit' ? 'Deposit' : 'Queue Withdrawal'}
-                        </>
+                        <ArrowUpFromLine className="mr-2 h-4 w-4" />
                     )}
+                    {isProcessing
+                        ? 'Processing...'
+                        : actionType === 'deposit'
+                            ? 'Deposit'
+                            : 'Request Withdrawal'}
                 </Button>
-
-                <VaultWithdrawal />
             </CardContent>
         </Card>
     );

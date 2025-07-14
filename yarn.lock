@@ -2863,7 +2863,7 @@
     "@walletconnect/window-getters" "^1.0.1"
     tslib "1.14.1"
 
-"@zenith-protocols/zenex-sdk@file:../zenex-sdk-js":
+"@zenith-protocols/vault-sdk@file:../vault-sdk-js":
   version "1.0.0"
   dependencies:
     "@stellar/stellar-sdk" "13.2.0"
