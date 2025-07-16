@@ -1,26 +1,32 @@
 'use client';
 
-import { VaultState } from '@/components/vault/vault-state';
+import { VaultState, VaultRedeem } from '@zenith-protocols/vault-sdk';
+import { VaultStateDisplay } from '@/components/vault/vault-state';
 import { VaultActions } from '@/components/vault/vault-actions';
-import { VaultRedeem } from '@/components/vault/vault-redeem';
+import { VaultRedeemDisplay } from '@/components/vault/vault-redeem';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useWalletStore } from '@/stores/wallet-store';
 
 interface VaultDashboardProps {
     vaultAddress: string;
-    vaultData: any; // You can type this properly based on your VaultData type
+    vaultState: VaultState;
+    userRedemption: VaultRedeem | null;
     onTransactionComplete?: () => void;
     isLoading?: boolean;
 }
 
 export function VaultDashboard({
     vaultAddress,
-    vaultData,
+    vaultState,
+    userRedemption,
     onTransactionComplete,
     isLoading = false
 }: VaultDashboardProps) {
+    const { walletAddress } = useWalletStore();
+
     if (isLoading) {
         return (
             <div className="grid gap-6 lg:grid-cols-2">
@@ -34,7 +40,7 @@ export function VaultDashboard({
         );
     }
 
-    if (!vaultData) {
+    if (!vaultState) {
         return (
             <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -50,22 +56,25 @@ export function VaultDashboard({
             {/* Main grid layout */}
             <div className="grid gap-6 lg:grid-cols-2">
                 {/* Vault State - Left Side */}
-                <VaultState vaultAddress={vaultAddress} vaultData={vaultData} />
+                <VaultStateDisplay vaultAddress={vaultAddress} vaultState={vaultState} />
 
                 {/* Vault Actions - Right Side */}
                 <VaultActions
                     vaultAddress={vaultAddress}
-                    vaultData={vaultData}
+                    vaultState={vaultState}
                     onTransactionComplete={onTransactionComplete}
                 />
             </div>
 
             {/* Redemption management - full width below */}
-            <VaultRedeem
-                vaultAddress={vaultAddress}
-                vaultData={vaultData}
-                onTransactionComplete={onTransactionComplete}
-            />
+            {walletAddress && (
+                <VaultRedeemDisplay
+                    vaultAddress={vaultAddress}
+                    vaultState={vaultState}
+                    userRedemption={userRedemption}
+                    onTransactionComplete={onTransactionComplete}
+                />
+            )}
         </div>
     );
 }

@@ -1,14 +1,13 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { VaultState, VaultContract, VaultRedeem } from '@zenith-protocols/vault-sdk';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { useWalletStore } from '@/stores/wallet-store';
-import { useQueryClient } from '@tanstack/react-query';
-import { VaultContract } from '@zenith-protocols/vault-sdk';
 import { toast } from 'sonner';
 import {
     Clock,
@@ -21,36 +20,59 @@ import {
 
 interface VaultRedeemProps {
     vaultAddress: string;
-    vaultData: any;
+    vaultState: VaultState;
+    userRedemption: VaultRedeem | null;
     onTransactionComplete?: () => void;
 }
 
-export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: VaultRedeemProps) {
-    const walletAddress = useWalletStore(state => state.walletAddress);
-    const network = useWalletStore(state => state.network);
-    const submitTransaction = useWalletStore(state => state.submitTransaction);
-    const queryClient = useQueryClient();
+export function VaultRedeemDisplay({
+    vaultAddress,
+    vaultState,
+    userRedemption,
+    onTransactionComplete
+}: VaultRedeemProps) {
+    const { walletAddress, submitTransaction } = useWalletStore();
     const [isProcessing, setIsProcessing] = useState(false);
-
-    // Mock redemption data - replace with actual query
-    const userRedemption = vaultData?.userRedemption;
+    const [timeRemaining, setTimeRemaining] = useState(0);
 
     // Calculate redemption status
     const redemptionStatus = useMemo(() => {
         if (!userRedemption) return null;
 
         const now = Date.now() / 1000;
-        const timeRemaining = userRedemption.unlockTime - now;
-        const isUnlocked = timeRemaining <= 0;
-        const progress = Math.max(0, Math.min(100, ((vaultData.redemptionDelay - timeRemaining) / vaultData.redemptionDelay) * 100));
+        const remaining = userRedemption.unlockTime - now;
+        const isUnlocked = remaining <= 0;
+        const progress = Math.max(0, Math.min(100, ((vaultState.lockTime - remaining) / vaultState.lockTime) * 100));
+
+        // Use the shares from VaultRedeem
+        const estimatedTokens = vaultState.sharesToTokens(userRedemption.shares);
 
         return {
             isUnlocked,
-            timeRemaining: Math.max(0, timeRemaining),
+            timeRemaining: Math.max(0, remaining),
             progress,
-            estimatedTokens: (parseFloat(userRedemption.shares) * vaultData.sharePrice).toFixed(2)
+            shares: userRedemption.shares,
+            estimatedTokens
         };
-    }, [userRedemption, vaultData]);
+    }, [userRedemption, vaultState]);
+
+    // Update time remaining every second
+    useEffect(() => {
+        if (!redemptionStatus || redemptionStatus.isUnlocked) return;
+
+        const interval = setInterval(() => {
+            setTimeRemaining(prev => Math.max(0, prev - 1));
+        }, 1000);
+
+        return () => clearInterval(interval);
+    }, [redemptionStatus]);
+
+    // Initialize time remaining
+    useEffect(() => {
+        if (redemptionStatus) {
+            setTimeRemaining(redemptionStatus.timeRemaining);
+        }
+    }, [redemptionStatus]);
 
     // Format time remaining
     const formatTimeRemaining = (seconds: number): string => {
@@ -70,18 +92,20 @@ export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: 
 
     // Handle normal redemption
     const handleRedeem = async () => {
-        if (!walletAddress || !userRedemption || !redemptionStatus?.isUnlocked) return;
+        if (!walletAddress || !redemptionStatus?.isUnlocked) return;
 
         setIsProcessing(true);
         try {
             const vaultContract = new VaultContract(vaultAddress);
-            const tx = vaultContract.redeem(walletAddress, walletAddress);
+            const tx = vaultContract.redeem({
+                receiver: walletAddress,
+                owner: walletAddress
+            });
 
             const result = await submitTransaction(tx);
 
             if (result.success) {
                 toast.success('Redemption completed successfully');
-                queryClient.invalidateQueries();
                 onTransactionComplete?.();
             } else {
                 toast.error(result.error || 'Redemption failed');
@@ -96,18 +120,31 @@ export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: 
 
     // Handle emergency redemption (with penalty)
     const handleEmergencyRedeem = async () => {
-        if (!walletAddress || !userRedemption) return;
+        if (!walletAddress || !redemptionStatus) return;
+
+        const penalty = redemptionStatus.estimatedTokens * vaultState.penaltyRate;
+        const tokensAfterPenalty = redemptionStatus.estimatedTokens - penalty;
+
+        const confirmed = window.confirm(
+            `Emergency redemption will incur a penalty of ${(vaultState.penaltyRate * 100).toFixed(1)}%. ` +
+            `You will receive approximately ${tokensAfterPenalty.toFixed(2)} tokens instead of ${redemptionStatus.estimatedTokens.toFixed(2)}. ` +
+            `Continue?`
+        );
+
+        if (!confirmed) return;
 
         setIsProcessing(true);
         try {
             const vaultContract = new VaultContract(vaultAddress);
-            const tx = vaultContract.emergencyRedeem(walletAddress, walletAddress);
+            const tx = vaultContract.emergencyRedeem({
+                receiver: walletAddress,
+                owner: walletAddress
+            });
 
             const result = await submitTransaction(tx);
 
             if (result.success) {
                 toast.success('Emergency redemption completed');
-                queryClient.invalidateQueries();
                 onTransactionComplete?.();
             } else {
                 toast.error(result.error || 'Emergency redemption failed');
@@ -122,7 +159,7 @@ export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: 
 
     // Handle cancel redemption
     const handleCancelRedeem = async () => {
-        if (!walletAddress || !userRedemption) return;
+        if (!walletAddress) return;
 
         setIsProcessing(true);
         try {
@@ -133,10 +170,9 @@ export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: 
 
             if (result.success) {
                 toast.success('Redemption cancelled');
-                queryClient.invalidateQueries();
                 onTransactionComplete?.();
             } else {
-                toast.error(result.error || 'Cancel failed');
+                toast.error(result.error || 'Failed to cancel redemption');
             }
         } catch (error) {
             console.error('Cancel redemption failed:', error);
@@ -146,108 +182,119 @@ export function VaultRedeem({ vaultAddress, vaultData, onTransactionComplete }: 
         }
     };
 
-    if (!userRedemption) return null;
+    if (!userRedemption || !redemptionStatus) {
+        return null;
+    }
+
+    const displayTimeRemaining = timeRemaining > 0 ? timeRemaining : redemptionStatus.timeRemaining;
 
     return (
         <Card>
             <CardHeader>
                 <CardTitle>Pending Redemption</CardTitle>
                 <CardDescription>
-                    Manage your vault share redemption
+                    Manage your withdrawal request
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-                {/* Redemption info */}
-                <div className="rounded-lg border p-4 space-y-3">
+                {/* Redemption Details */}
+                <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Redeeming</span>
-                        <span className="font-medium">{userRedemption.shares} shares</span>
+                        <span className="text-sm text-muted-foreground">Shares to Redeem</span>
+                        <span className="font-medium">{redemptionStatus.shares.toFixed(4)}</span>
                     </div>
                     <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Estimated tokens</span>
-                        <span className="font-medium">~{redemptionStatus?.estimatedTokens} {vaultData.tokenSymbol}</span>
+                        <span className="text-sm text-muted-foreground">Estimated Tokens</span>
+                        <span className="font-medium">{redemptionStatus.estimatedTokens.toFixed(2)}</span>
                     </div>
                 </div>
 
-                {/* Progress bar */}
+                {/* Progress */}
                 <div className="space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Unlock progress</span>
-                        <span className="font-medium">{redemptionStatus?.progress.toFixed(0)}%</span>
-                    </div>
-                    <Progress value={redemptionStatus?.progress || 0} className="h-2" />
                     <div className="flex items-center justify-between">
-                        <Badge variant={redemptionStatus?.isUnlocked ? "default" : "secondary"}>
-                            {redemptionStatus?.isUnlocked ? (
+                        <span className="text-sm font-medium">Time Remaining</span>
+                        <Badge variant={redemptionStatus.isUnlocked ? "default" : "secondary"}>
+                            {redemptionStatus.isUnlocked ? (
                                 <>
                                     <CheckCircle2 className="mr-1 h-3 w-3" />
-                                    Ready to redeem
+                                    Ready
                                 </>
                             ) : (
                                 <>
                                     <Clock className="mr-1 h-3 w-3" />
-                                    {formatTimeRemaining(redemptionStatus?.timeRemaining || 0)}
+                                    {formatTimeRemaining(displayTimeRemaining)}
                                 </>
                             )}
                         </Badge>
                     </div>
+                    <Progress value={redemptionStatus.progress} className="h-2" />
                 </div>
 
-                {/* Action buttons */}
-                <div className="grid gap-2">
-                    {redemptionStatus?.isUnlocked ? (
+                {/* Actions */}
+                <div className="flex gap-2">
+                    {redemptionStatus.isUnlocked ? (
                         <Button
                             onClick={handleRedeem}
-                            disabled={isProcessing || !walletAddress}
-                            className="w-full"
+                            disabled={isProcessing}
+                            className="flex-1"
                         >
                             {isProcessing ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Processing...
+                                </>
                             ) : (
-                                <CheckCircle2 className="mr-2 h-4 w-4" />
+                                <>
+                                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                                    Complete Redemption
+                                </>
                             )}
-                            Complete Redemption
                         </Button>
                     ) : (
                         <>
-                            {/* Emergency redeem with penalty warning */}
-                            <Alert>
-                                <AlertTriangle className="h-4 w-4" />
-                                <AlertDescription>
-                                    Emergency redemption available with {(vaultData.maxPenaltyRate * 100).toFixed(1)}% penalty
-                                </AlertDescription>
-                            </Alert>
-
-                            <div className="grid grid-cols-2 gap-2">
-                                <Button
-                                    variant="destructive"
-                                    onClick={handleEmergencyRedeem}
-                                    disabled={isProcessing || !walletAddress}
-                                >
-                                    {isProcessing ? (
+                            <Button
+                                variant="destructive"
+                                onClick={handleEmergencyRedeem}
+                                disabled={isProcessing}
+                                className="flex-1"
+                            >
+                                {isProcessing ? (
+                                    <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    ) : (
+                                        Processing...
+                                    </>
+                                ) : (
+                                    <>
                                         <AlertTriangle className="mr-2 h-4 w-4" />
-                                    )}
-                                    Emergency Redeem
-                                </Button>
-
-                                <Button
-                                    variant="outline"
-                                    onClick={handleCancelRedeem}
-                                    disabled={isProcessing || !walletAddress}
-                                >
-                                    {isProcessing ? (
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    ) : (
-                                        <XCircle className="mr-2 h-4 w-4" />
-                                    )}
-                                    Cancel
-                                </Button>
-                            </div>
+                                        Emergency Redeem
+                                    </>
+                                )}
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={handleCancelRedeem}
+                                disabled={isProcessing}
+                            >
+                                {isProcessing ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <XCircle className="h-4 w-4" />
+                                )}
+                            </Button>
                         </>
                     )}
                 </div>
+
+                {/* Warning for emergency redemption */}
+                {!redemptionStatus.isUnlocked && (
+                    <Alert>
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>
+                            Emergency redemption will incur a penalty of up to {(vaultState.penaltyRate * 100).toFixed(1)}%
+                            based on time remaining.
+                        </AlertDescription>
+                    </Alert>
+                )}
             </CardContent>
         </Card>
     );
