@@ -73,7 +73,6 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
             let tx: string;
 
             if (actionType === 'deposit') {
-                // Scale amount to token decimals (assuming 7)
                 const scaledAmount = Math.floor(inputAmount * 1e7);
                 tx = vaultContract.deposit({
                     tokens: BigInt(scaledAmount),
@@ -81,7 +80,6 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
                     owner: walletAddress
                 });
             } else {
-                // Request redemption
                 const scaledShares = Math.floor(inputAmount * 1e7);
                 tx = vaultContract.requestRedeem({
                     shares: BigInt(scaledShares),

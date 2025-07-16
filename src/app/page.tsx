@@ -20,7 +20,6 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Load vault data
   const loadVault = async () => {
     if (!vaultAddress || !network) {
       setError('Please enter a vault address');
@@ -31,7 +30,6 @@ export default function Home() {
     setError('');
 
     try {
-      // Load vault state from SDK
       const state = await VaultState.load(network, vaultAddress);
       setVaultState(state);
 
@@ -59,12 +57,11 @@ export default function Home() {
       setUserRedemption(redemption);
     } catch (err) {
       console.error('Failed to load user redemption:', err);
-      // User may not have a redemption, which is fine
+      // User may not have a redemption
       setUserRedemption(null);
     }
   };
 
-  // Refresh data
   const refreshData = () => {
     if (vaultState) {
       loadVault();
@@ -124,7 +121,6 @@ export default function Home() {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Vault Header */}
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-2xl font-bold">Vault</h2>
@@ -155,7 +151,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Vault Dashboard */}
             <VaultDashboard
               vaultAddress={vaultAddress}
               vaultState={vaultState}
