@@ -1,5 +1,4 @@
-// src/lib/stellar/types.ts
-import type { rpc, Transaction, xdr } from '@stellar/stellar-sdk';
+import type { rpc } from '@stellar/stellar-sdk';
 
 // Network Configuration
 export interface NetworkConfig {
@@ -7,9 +6,6 @@ export interface NetworkConfig {
     horizon: string;
     passphrase: string;
     explorer?: string;
-    launchtube?: string;
-    jwt?: string;
-    useLaunchtube?: boolean;
 }
 
 // Transaction Types

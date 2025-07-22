@@ -15,12 +15,14 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { useWalletStore } from '@/stores/wallet-store';
-import { WASM_HASHES } from '@/lib/constants';
 import { AlertCircle, Loader2, Plus, X, Info, Copy, CheckCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { VaultContract } from '@zenith-protocols/vault-sdk';
 import { StrKey } from '@stellar/stellar-sdk';
-import { generateSalt, generateContractId } from '@/lib/stellar/deploy';
+import { generateSalt } from '@/lib/stellar/deploy';
+import { WASM_HASHES } from '@/lib/stellar/constants';
+import { scValToNative } from '@stellar/stellar-sdk';
+import { useRouter } from 'next/navigation';
 
 interface DeployModalProps {
     open: boolean;
@@ -29,9 +31,10 @@ interface DeployModalProps {
 
 const SCALAR_7 = 10_000_000;
 
-export function DeployModal({ open, onOpenChange }: DeployModalProps) {
+export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModalProps & { onVaultDeployed: (contractId: string) => void }) {
     // Change: Now we get the whole context object directly
     const { walletAddress, network, submitTransaction, connected } = useWalletStore();
+    const router = useRouter();
 
     // Form state
     const [tokenAddress, setTokenAddress] = useState('');
@@ -45,7 +48,7 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
     const [deployedContractId, setDeployedContractId] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
-    // WASM hashes state
+    // WASM hashes state 
     const [vaultWasmHash, setVaultWasmHash] = useState('');
     const [tokenWasmHash, setTokenWasmHash] = useState('');
 
@@ -101,7 +104,8 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
             return false;
         }
 
-        const validStrategies = strategies.filter(s => s && StrKey.isValidContract(s));
+        // Accept both contract (C...) and user (G...) addresses for strategies
+        const validStrategies = strategies.filter(s => s && (StrKey.isValidContract(s) || StrKey.isValidEd25519PublicKey(s)));
         if (validStrategies.length === 0) {
             toast.error('At least one valid strategy address is required');
             return false;
@@ -121,6 +125,25 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
         return true;
     };
 
+    // Handle successful deploy: decode contract address, close modal, and redirect to vault
+    const handleDeploySuccess = (txResponse: any) => {
+        let contractAddress = null;
+        if (txResponse?.returnValue) {
+            try {
+                contractAddress = scValToNative(txResponse.returnValue);
+            } catch (e) {
+                console.error('Failed to decode contract address:', e);
+            }
+        }
+        if (contractAddress && typeof contractAddress === 'string') {
+            setDeployedContractId(null);
+            onOpenChange(false);
+            onVaultDeployed(contractAddress); // <-- Notify parent to load the new vault
+        } else {
+            toast.error('Vault deployed, but failed to decode contract address.');
+        }
+    };
+
     const handleDeploy = async () => {
         if (!connected || !walletAddress) {
             toast.error('Please connect your wallet first');
@@ -133,14 +156,6 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
         try {
             // Generate salt for deployment
             const salt = generateSalt();
-
-            // Calculate contract ID
-            const contractId = await generateContractId(
-                walletAddress,
-                salt,
-                vaultWasmHash
-            );
-
             // Filter valid strategies
             const validStrategies = strategies.filter(s => s && StrKey.isValidContract(s));
 
@@ -165,8 +180,8 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
             const result = await submitTransaction(deployOp);
 
             if (result.success) {
-                setDeployedContractId(contractId);
-                toast.success('Vault deployed successfully!');
+                // Use handleDeploySuccess to process the result
+                handleDeploySuccess(result.result);
             } else {
                 toast.error(result.error || 'Failed to deploy vault');
             }
@@ -209,73 +224,9 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
                 </DialogHeader>
 
                 {deployedContractId ? (
-                    <div className="space-y-4">
-                        <Alert>
-                            <CheckCircle className="h-4 w-4" />
-                            <AlertDescription>
-                                Vault deployed successfully!
-                            </AlertDescription>
-                        </Alert>
-
-                        <div className="space-y-2">
-                            <Label>Contract ID</Label>
-                            <div className="flex gap-2">
-                                <Input
-                                    value={deployedContractId}
-                                    readOnly
-                                    className="font-mono text-sm"
-                                />
-                                <Button
-                                    size="icon"
-                                    variant="outline"
-                                    onClick={handleCopyContractId}
-                                >
-                                    {copied ? (
-                                        <CheckCircle className="h-4 w-4" />
-                                    ) : (
-                                        <Copy className="h-4 w-4" />
-                                    )}
-                                </Button>
-                            </div>
-                        </div>
-
-                        <DialogFooter>
-                            <Button onClick={handleClose}>Close</Button>
-                        </DialogFooter>
-                    </div>
+                    null
                 ) : (
                     <div className="space-y-6">
-                        {/* WASM Hashes */}
-                        <div className="space-y-4">
-                            <h3 className="text-sm font-medium">Contract Configuration</h3>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="vaultWasm">Vault WASM Hash</Label>
-                                <Input
-                                    id="vaultWasm"
-                                    placeholder="Vault contract WASM hash"
-                                    value={vaultWasmHash}
-                                    onChange={(e) => setVaultWasmHash(e.target.value)}
-                                    disabled={deploying}
-                                    className="font-mono text-xs"
-                                />
-                            </div>
-
-                            <div className="space-y-2">
-                                <Label htmlFor="tokenWasm">Token WASM Hash (for share token)</Label>
-                                <Input
-                                    id="tokenWasm"
-                                    placeholder="Token contract WASM hash"
-                                    value={tokenWasmHash}
-                                    onChange={(e) => setTokenWasmHash(e.target.value)}
-                                    disabled={deploying}
-                                    className="font-mono text-xs"
-                                />
-                            </div>
-                        </div>
-
-                        <Separator />
-
                         {/* Basic Configuration */}
                         <div className="space-y-4">
                             <h3 className="text-sm font-medium">Basic Configuration</h3>
@@ -375,7 +326,7 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
                             <div className="grid grid-cols-3 gap-4">
                                 <div className="space-y-2">
                                     <Label htmlFor="minLiquidity">
-                                        Min Liquidity Rate (%)
+                                        Min Liquidity (%)
                                     </Label>
                                     <Input
                                         id="minLiquidity"
@@ -390,8 +341,8 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label htmlFor="redemptionDelay">
-                                        Redemption Delay (seconds)
+                                    <Label htmlFor="redemptionDelay" className="flex items-center gap-2">
+                                        Lock time (s)
                                     </Label>
                                     <Input
                                         id="redemptionDelay"
@@ -405,7 +356,7 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
 
                                 <div className="space-y-2">
                                     <Label htmlFor="maxPenalty">
-                                        Max Penalty Rate (%)
+                                        Max Penalty (%)
                                     </Label>
                                     <Input
                                         id="maxPenalty"
@@ -418,6 +369,35 @@ export function DeployModal({ open, onOpenChange }: DeployModalProps) {
                                         step="0.1"
                                     />
                                 </div>
+                            </div>
+                        </div>
+
+                        <Separator />
+
+                        {/* Contract Configuration */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium">Contract Configuration</h3>
+                            <div className="space-y-2">
+                                <Label htmlFor="vaultWasm">Vault WASM Hash</Label>
+                                <Input
+                                    id="vaultWasm"
+                                    placeholder="Vault contract WASM hash"
+                                    value={vaultWasmHash}
+                                    onChange={(e) => setVaultWasmHash(e.target.value)}
+                                    disabled={deploying}
+                                    className="font-mono text-xs"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="tokenWasm">Token WASM Hash (for share token)</Label>
+                                <Input
+                                    id="tokenWasm"
+                                    placeholder="Token contract WASM hash"
+                                    value={tokenWasmHash}
+                                    onChange={(e) => setTokenWasmHash(e.target.value)}
+                                    disabled={deploying}
+                                    className="font-mono text-xs"
+                                />
                             </div>
                         </div>
 

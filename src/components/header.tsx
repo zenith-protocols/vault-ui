@@ -12,7 +12,6 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { useWalletStore } from '@/stores/wallet-store';
 import { NetworkModal } from './network-modal';
-import { DeployModal } from './deploy-modal';
 import { toast } from 'sonner';
 import {
     Settings,
@@ -36,7 +35,6 @@ export function Header() {
 
     const [copied, setCopied] = useState(false);
     const [networkModalOpen, setNetworkModalOpen] = useState(false);
-    const [deployModalOpen, setDeployModalOpen] = useState(false);
 
     const isTestnet = network.passphrase.includes('Test');
     const shortAddress = walletAddress
@@ -133,13 +131,6 @@ export function Header() {
                                 </DropdownMenu>
 
                                 {/* Deploy Button */}
-                                <Button
-                                    size="sm"
-                                    onClick={() => setDeployModalOpen(true)}
-                                >
-                                    <Plus className="mr-2 h-4 w-4" />
-                                    Deploy Vault
-                                </Button>
                             </div>
                         )}
                     </div>
@@ -150,10 +141,6 @@ export function Header() {
             <NetworkModal
                 open={networkModalOpen}
                 onOpenChange={setNetworkModalOpen}
-            />
-            <DeployModal
-                open={deployModalOpen}
-                onOpenChange={setDeployModalOpen}
             />
         </>
     );

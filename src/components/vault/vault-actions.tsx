@@ -17,6 +17,7 @@ import {
     Loader2,
     Info
 } from 'lucide-react';
+import { useDebounce } from '@/hooks/use-debounce';
 
 type ActionType = 'deposit' | 'withdraw';
 
@@ -32,15 +33,16 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
     // State
     const [actionType, setActionType] = useState<ActionType>('deposit');
     const [amount, setAmount] = useState('');
+    const debouncedAmount = useDebounce(amount, 500);
     const [isProcessing, setIsProcessing] = useState(false);
 
     const sharePrice = vaultState.sharePrice();
 
     // Calculate estimated output
     const estimatedOutput = useMemo(() => {
-        if (!amount) return { value: '0', label: '' };
+        if (!debouncedAmount) return { value: '0', label: '' };
 
-        const inputAmount = parseFloat(amount);
+        const inputAmount = parseFloat(debouncedAmount);
         if (isNaN(inputAmount) || inputAmount <= 0) return { value: '0', label: '' };
 
         if (actionType === 'deposit') {
@@ -52,16 +54,16 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
             const tokens = vaultState.sharesToTokens(inputAmount);
             return { value: tokens.toFixed(2), label: 'tokens' };
         }
-    }, [amount, actionType, vaultState]);
+    }, [debouncedAmount, actionType, vaultState]);
 
     // Handle action
     const handleAction = async () => {
-        if (!walletAddress || !amount || !network) {
+        if (!walletAddress || !debouncedAmount || !network) {
             toast.error('Please connect wallet and enter amount');
             return;
         }
 
-        const inputAmount = parseFloat(amount);
+        const inputAmount = parseFloat(debouncedAmount);
         if (isNaN(inputAmount) || inputAmount <= 0) {
             toast.error('Please enter a valid amount');
             return;
@@ -71,6 +73,8 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
         try {
             const vaultContract = new VaultContract(vaultAddress);
             let tx: string;
+            let actualRate: number | null = null;
+            let result;
 
             if (actionType === 'deposit') {
                 const scaledAmount = Math.floor(inputAmount * 1e7);
@@ -79,21 +83,39 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
                     receiver: walletAddress,
                     owner: walletAddress
                 });
+                result = await submitTransaction(tx);
+                // After deposit, reload vault state to get new shares
+                if (result.success) {
+                    // Calculate actual shares received
+                    const newVaultState = await VaultState.load(network, vaultAddress);
+                    const shares = newVaultState.tokensToShares(inputAmount);
+                    actualRate = shares / inputAmount;
+                }
             } else {
                 const scaledShares = Math.floor(inputAmount * 1e7);
                 tx = vaultContract.requestRedeem({
                     shares: BigInt(scaledShares),
                     owner: walletAddress
                 });
+                result = await submitTransaction(tx);
+                // After withdrawal, reload vault state to get new tokens
+                if (result.success) {
+                    const newVaultState = await VaultState.load(network, vaultAddress);
+                    const tokens = newVaultState.sharesToTokens(inputAmount);
+                    actualRate = tokens / inputAmount;
+                }
             }
-
-            const result = await submitTransaction(tx);
 
             if (result.success) {
                 toast.success(
-                    actionType === 'deposit'
-                        ? 'Deposit successful!'
-                        : 'Withdrawal request submitted!'
+                    <div>
+                        <div>{actionType === 'deposit' ? 'Deposit successful!' : 'Withdrawal request submitted!'}</div>
+                        {actualRate !== null && (
+                            <div className="text-xs mt-1">
+                                Actual swap rate: {actualRate.toFixed(6)} {actionType === 'deposit' ? 'shares/token' : 'tokens/share'}
+                            </div>
+                        )}
+                    </div>
                 );
                 setAmount('');
                 onTransactionComplete?.();
@@ -152,7 +174,7 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
                 </div>
 
                 {/* Estimated Output */}
-                {amount && parseFloat(amount) > 0 && (
+                {debouncedAmount && parseFloat(debouncedAmount) > 0 && (
                     <Alert>
                         <Info className="h-4 w-4" />
                         <AlertDescription>
@@ -174,7 +196,7 @@ export function VaultActions({ vaultAddress, vaultState, onTransactionComplete }
                 <Button
                     className="w-full"
                     onClick={handleAction}
-                    disabled={!isConnected || isProcessing || !amount || parseFloat(amount) <= 0}
+                    disabled={!isConnected || isProcessing || !debouncedAmount || parseFloat(debouncedAmount) <= 0 || debouncedAmount !== amount}
                     variant={actionType === 'deposit' ? 'default' : 'destructive'}
                 >
                     {isProcessing ? (

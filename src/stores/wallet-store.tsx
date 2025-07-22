@@ -26,7 +26,6 @@ import {
     TxStatus,
     sendTransaction,
     simulateTransaction,
-    sendLaunchTube,
     TESTNET,
 } from '@/lib/stellar';
 
@@ -203,25 +202,17 @@ export function WalletProvider({ children }: WalletProviderProps) {
             console.log('Submitting transaction:', transaction.toXDR());
 
             let result: TransactionResult;
-            // Check if we should use LaunchTube
-            if (network.useLaunchtube && network.launchtube && network.jwt) {
-                setTxStatus(TxStatus.SIGNING);
-                const { signedTxXdr } = await kit.signTransaction(transaction.toXDR());
-                setTxStatus(TxStatus.SUBMITTING);
-                result = await sendLaunchTube(signedTxXdr, BASE_FEE, network);
-            } else {
-                // Sign transaction
-                const preparedTx = await server.prepareTransaction(transaction);
+            // Sign transaction
+            const preparedTx = await server.prepareTransaction(transaction);
 
-                setTxStatus(TxStatus.SIGNING);
-                const { signedTxXdr } = await kit.signTransaction(preparedTx.toXDR(), {
-                    networkPassphrase: network.passphrase,
-                });
+            setTxStatus(TxStatus.SIGNING);
+            const { signedTxXdr } = await kit.signTransaction(preparedTx.toXDR(), {
+                networkPassphrase: network.passphrase,
+            });
 
-                // Submit transaction
-                setTxStatus(TxStatus.SUBMITTING);
-                result = await sendTransaction(server, new Transaction(signedTxXdr, network.passphrase));
-            }
+            // Submit transaction
+            setTxStatus(TxStatus.SUBMITTING);
+            result = await sendTransaction(server, new Transaction(signedTxXdr, network.passphrase));
 
             if (result.success) {
                 setTxStatus(TxStatus.SUCCESS);

@@ -82,7 +82,7 @@ export function TransactionOverlay() {
 
     return (
         <Dialog open={isOpen} onOpenChange={canClose ? handleClose : undefined}>
-            <DialogContent className="sm:max-w-md">
+            <DialogContent className="sm:max-w-md" showCloseButton={true}>
                 <DialogHeader>
                     <DialogTitle>
                         {txStatus === TxStatus.SIGNING && 'Sign Transaction'}
@@ -184,23 +184,6 @@ export function TransactionOverlay() {
                         </>
                     )}
 
-                    {/* Actions */}
-                    <div className="flex justify-end gap-2 pt-4">
-                        {canClose ? (
-                            <Button onClick={handleClose} className="w-full sm:w-auto">
-                                Close
-                            </Button>
-                        ) : (
-                            <Button
-                                onClick={handleReturn}
-                                variant="outline"
-                                className="w-full sm:w-auto"
-                            >
-                                <X className="h-4 w-4 mr-2" />
-                                Minimize
-                            </Button>
-                        )}
-                    </div>
                 </div>
             </DialogContent>
         </Dialog>

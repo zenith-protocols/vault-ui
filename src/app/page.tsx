@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useWalletStore } from '@/stores/wallet-store';
-import { Search, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Search, Loader2, AlertCircle, RefreshCw, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { VaultState, VaultRedeem } from '@zenith-protocols/vault-sdk';
+import { DeployModal } from '@/components/deploy-modal';
 
 export default function Home() {
   const { walletAddress, network } = useWalletStore();
@@ -19,6 +20,7 @@ export default function Home() {
   const [userRedemption, setUserRedemption] = useState<VaultRedeem | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
 
   const loadVault = async () => {
     if (!vaultAddress || !network) {
@@ -75,10 +77,23 @@ export default function Home() {
     }
   }, [walletAddress]);
 
+  // Callback for when a new vault is deployed
+  const handleVaultDeployed = async (newVaultAddress: string) => {
+    setVaultAddress(newVaultAddress);
+    setDeployModalOpen(false);
+    setVaultState(null); // Reset state to trigger loading UI
+    setUserRedemption(null);
+    await loadVault();
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
-
+      <DeployModal
+        open={deployModalOpen}
+        onOpenChange={setDeployModalOpen}
+        onVaultDeployed={handleVaultDeployed}
+      />
       <main className="container mx-auto max-w-7xl px-4 py-8">
         {!vaultState ? (
           <Card className="mx-auto max-w-xl">
@@ -108,6 +123,14 @@ export default function Home() {
                       Load Vault
                     </>
                   )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeployModalOpen(true)}
+                  disabled={isLoading}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Deploy Vault
                 </Button>
               </div>
 

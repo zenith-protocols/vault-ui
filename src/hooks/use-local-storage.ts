@@ -1,4 +1,3 @@
-// src/hooks/use-local-storage.ts
 import { useState, useCallback, useEffect } from 'react';
 
 /**
