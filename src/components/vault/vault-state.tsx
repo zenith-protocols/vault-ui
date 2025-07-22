@@ -10,9 +10,6 @@ import {
     Wallet,
     Lock,
     AlertTriangle,
-    Info,
-    Users,
-    DollarSign,
     Activity
 } from 'lucide-react';
 

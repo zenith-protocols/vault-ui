@@ -200,8 +200,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
                 .build();
 
             console.log('Submitting transaction:', transaction.toXDR());
-
-            let result: TransactionResult;
             // Sign transaction
             const preparedTx = await server.prepareTransaction(transaction);
 
@@ -212,7 +210,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
             // Submit transaction
             setTxStatus(TxStatus.SUBMITTING);
-            result = await sendTransaction(server, new Transaction(signedTxXdr, network.passphrase));
+            const result = await sendTransaction(server, new Transaction(signedTxXdr, network.passphrase));
 
             if (result.success) {
                 setTxStatus(TxStatus.SUCCESS);

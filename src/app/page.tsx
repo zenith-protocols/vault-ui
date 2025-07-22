@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Header } from '@/components/header';
 import { VaultDashboard } from '@/components/vault-dashboard';
 import { Input } from '@/components/ui/input';
@@ -51,7 +51,7 @@ export default function Home() {
   };
 
   // Load user redemption data
-  const loadUserRedemption = async () => {
+  const loadUserRedemption = useCallback(async () => {
     if (!walletAddress || !vaultAddress || !network) return;
 
     try {
@@ -62,7 +62,7 @@ export default function Home() {
       // User may not have a redemption
       setUserRedemption(null);
     }
-  };
+  }, [walletAddress, vaultAddress, network]);
 
   const refreshData = () => {
     if (vaultState) {
@@ -75,7 +75,7 @@ export default function Home() {
     if (walletAddress && vaultState) {
       loadUserRedemption();
     }
-  }, [walletAddress]);
+  }, [walletAddress, vaultState, loadUserRedemption]);
 
   // Callback for when a new vault is deployed
   const handleVaultDeployed = async (newVaultAddress: string) => {

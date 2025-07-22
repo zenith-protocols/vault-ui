@@ -3,7 +3,7 @@ import {
     rpc,
     Transaction,
 } from '@stellar/stellar-sdk';
-import type { NetworkConfig, SimulationResult, TransactionResult } from './types';
+import type { SimulationResult, TransactionResult } from './types';
 
 /**
  * Submit transaction via Soroban RPC

@@ -15,14 +15,13 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { useWalletStore } from '@/stores/wallet-store';
-import { AlertCircle, Loader2, Plus, X, Info, Copy, CheckCircle } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, X, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { VaultContract } from '@zenith-protocols/vault-sdk';
 import { StrKey } from '@stellar/stellar-sdk';
 import { generateSalt } from '@/lib/stellar/deploy';
 import { WASM_HASHES } from '@/lib/stellar/constants';
-import { scValToNative } from '@stellar/stellar-sdk';
-import { useRouter } from 'next/navigation';
+import { scValToNative, xdr } from '@stellar/stellar-sdk';
 
 interface DeployModalProps {
     open: boolean;
@@ -34,7 +33,6 @@ const SCALAR_7 = 10_000_000;
 export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModalProps & { onVaultDeployed: (contractId: string) => void }) {
     // Change: Now we get the whole context object directly
     const { walletAddress, network, submitTransaction, connected } = useWalletStore();
-    const router = useRouter();
 
     // Form state
     const [tokenAddress, setTokenAddress] = useState('');
@@ -46,7 +44,6 @@ export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModal
     const [maxPenaltyRate, setMaxPenaltyRate] = useState('10');
     const [deploying, setDeploying] = useState(false);
     const [deployedContractId, setDeployedContractId] = useState<string | null>(null);
-    const [copied, setCopied] = useState(false);
 
     // WASM hashes state 
     const [vaultWasmHash, setVaultWasmHash] = useState('');
@@ -77,15 +74,6 @@ export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModal
         const newStrategies = [...strategies];
         newStrategies[index] = value;
         setStrategies(newStrategies);
-    };
-
-    const handleCopyContractId = () => {
-        if (deployedContractId) {
-            navigator.clipboard.writeText(deployedContractId);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-            toast.success('Contract ID copied!');
-        }
     };
 
     const validateForm = () => {
@@ -126,13 +114,17 @@ export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModal
     };
 
     // Handle successful deploy: decode contract address, close modal, and redirect to vault
-    const handleDeploySuccess = (txResponse: any) => {
+    // txResponse is expected to be an object with a returnValue property of type ScVal
+    const handleDeploySuccess = (txResponse: { returnValue?: xdr.ScVal } | unknown) => {
         let contractAddress = null;
-        if (txResponse?.returnValue) {
-            try {
-                contractAddress = scValToNative(txResponse.returnValue);
-            } catch (e) {
-                console.error('Failed to decode contract address:', e);
+        if (typeof txResponse === 'object' && txResponse !== null && 'returnValue' in txResponse) {
+            const returnValue = (txResponse as { returnValue?: xdr.ScVal }).returnValue;
+            if (returnValue !== undefined) {
+                try {
+                    contractAddress = scValToNative(returnValue);
+                } catch (e) {
+                    console.error('Failed to decode contract address:', e);
+                }
             }
         }
         if (contractAddress && typeof contractAddress === 'string') {
@@ -202,8 +194,6 @@ export function DeployModal({ open, onOpenChange, onVaultDeployed }: DeployModal
         setRedemptionDelay('86400');
         setMaxPenaltyRate('10');
         setDeployedContractId(null);
-        setCopied(false);
-        // Keep WASM hashes as they are likely to be reused
     };
 
     const handleClose = () => {

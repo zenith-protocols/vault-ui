@@ -19,7 +19,6 @@ import {
     LogOut,
     Wallet as WalletIcon,
     Check,
-    Plus,
     Rocket
 } from 'lucide-react';
 

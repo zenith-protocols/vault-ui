@@ -16,8 +16,7 @@ import {
     CheckCircle,
     XCircle,
     Copy,
-    ExternalLink,
-    X
+    ExternalLink
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWalletStore, TxStatus } from '@/stores/wallet-store';
@@ -60,17 +59,6 @@ export function TransactionOverlay() {
         setTimeout(() => {
             clearTxStatus();
         }, 300);
-    };
-
-    const handleReturn = () => {
-        // If transaction is in progress, just minimize the dialog
-        if (txStatus === TxStatus.SIGNING || txStatus === TxStatus.SUBMITTING) {
-            setIsOpen(false);
-            // Don't clear the transaction status, so it can reopen when done
-        } else {
-            // If transaction is complete, close and clear
-            handleClose();
-        }
     };
 
     const canClose = txStatus === TxStatus.SUCCESS || txStatus === TxStatus.FAIL || txStatus === TxStatus.NONE;

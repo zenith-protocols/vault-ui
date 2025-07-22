@@ -42,9 +42,7 @@ export function generateSalt(): Buffer {
     if (typeof window !== 'undefined' && window.crypto) {
         window.crypto.getRandomValues(salt);
     } else {
-        // Fallback for Node.js environment
-        const crypto = require('crypto');
-        crypto.randomFillSync(salt);
+        crypto.getRandomValues(salt);
     }
     return Buffer.from(salt);
 }
